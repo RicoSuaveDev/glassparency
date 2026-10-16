@@ -154,9 +154,91 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .principles p { margin: 0; color: var(--muted); }
 footer { display: flex; justify-content: space-between; padding: 28px 0 40px; font-size: 14px; color: var(--muted); }
 
+/* --- The CSS glass look -------------------------------------------------------
+   What phones see (the library keeps WebGL off at ≤ 860px, where it would
+   trail the page while scrolling), and what every browser shows for a moment
+   before the real glass draws. On desktop the library's glass replaces it. */
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .nav, .install, .player, .row, .drop, .slab {
+    -webkit-backdrop-filter: blur(16px) saturate(1.7);
+    backdrop-filter: blur(16px) saturate(1.7);
+  }
+  .drop, .slab {
+    -webkit-backdrop-filter: blur(1.5px) saturate(1.4) brightness(1.08);
+    backdrop-filter: blur(1.5px) saturate(1.4) brightness(1.08);
+  }
+}
+.nav, .install { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.55), 0 10px 30px rgba(17, 17, 17, 0.08); }
+[data-theme='dark'] .nav, [data-theme='dark'] .install { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1), 0 10px 30px rgba(0, 0, 0, 0.4); }
+.player { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), inset 0 0 0 1px rgba(255, 255, 255, 0.14), 0 14px 34px rgba(0, 0, 0, 0.28); }
+.row { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), inset 0 0 0 1px rgba(255, 255, 255, 0.35); }
+/* Lenses: a clear bubble with a bright rim, light inside the top edge and a soft shadow. */
+.drop, .slab {
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow:
+    inset 0 0 0 1.5px rgba(255, 255, 255, 0.75),
+    inset 0 10px 18px -6px rgba(255, 255, 255, 0.55),
+    inset 0 -8px 16px -8px rgba(0, 0, 0, 0.25),
+    0 14px 30px rgba(0, 0, 0, 0.25);
+}
+
+/* --- Tablets --------------------------------------------------------------- */
 @media (max-width: 900px) {
   .span-7, .span-5 { grid-column: 1 / -1; }
   .links { display: none; }
   .hero-foot, .principles { grid-template-columns: 1fr; }
   .poster .word { font-size: 64px; }
+}
+
+/* --- Phones (same breakpoint as the library's mobile layout) ---------------- */
+@media (max-width: 860px) {
+  .wrap { width: calc(100% - 32px); }
+
+  .nav { top: 12px; width: calc(100% - 24px); gap: 10px; padding: 7px 7px 7px 16px; }
+  .brand { flex: 1; font-size: 16px; }
+  .ver { display: none; }
+  .nav .pill { height: 36px; padding: 0 14px; font-size: 13px; }
+
+  .hero { padding: 104px 0 40px; }
+  .display { font-size: clamp(48px, 15vw, 96px); }
+  .lens { display: none; } /* (a drag-with-the-mouse demo; on a phone it just hid the headline) */
+  .hero-foot { gap: 24px; margin-top: 28px; }
+  .lede { font-size: 16px; }
+  .install { width: 100%; justify-content: space-between; height: 52px; padding-left: 18px; font-size: 14px; }
+
+  .bento { gap: 12px; }
+  .tile { border-radius: 22px; min-height: 0; }
+
+  .poster { min-height: 470px; }
+  .poster .word { font-size: 58px; left: 22px; top: 32px; }
+  .poster .sun { width: 300px; height: 300px; right: -90px; top: 110px; }
+  .poster .half { width: 240px; height: 120px; border-radius: 120px 120px 0 0; left: 30px; top: 230px; }
+  .player {
+    left: 12px; right: 12px; bottom: 12px;
+    grid-template-columns: 52px minmax(0, 1fr); gap: 12px 14px; padding: 14px; border-radius: 24px;
+  }
+  .art { width: 52px; height: 52px; border-radius: 12px; }
+  .art::after { width: 32px; height: 32px; left: 10px; top: 24px; }
+  .controls { grid-column: 1 / -1; justify-content: center; gap: 16px; }
+  .player .round { width: 42px; height: 42px; }
+  .player .round.big { width: 54px; height: 54px; }
+
+  .settings { padding: 52px 14px 14px; gap: 10px; }
+  .settings .numeral { font-size: 220px; right: -12px; bottom: -44px; }
+  .row { padding: 12px 12px 12px 16px; gap: 12px; }
+  .row small { display: block; font-size: 12px; line-height: 1.35; }
+  .row input[type='range'] { width: 120px; flex: none; }
+
+  .stripes { min-height: 300px !important; }
+  .type { min-height: 280px !important; }
+  .type .aa { font-size: 168px; }
+  .slab { width: 220px; height: 88px; }
+
+  .principles { gap: 28px; padding: 56px 0 40px; }
+  .principles h3 { font-size: 22px; }
+  footer { flex-wrap: wrap; gap: 6px 16px; }
+}
+@media (max-width: 400px) {
+  .nav .long { display: none; } /* "Get it on npm" → "npm" */
+  .install { font-size: 13px; }
 }

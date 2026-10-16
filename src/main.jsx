@@ -20,7 +20,10 @@ function makeConfig({ frost, fringe, rim, thickness }) {
   const light = rim ? 0.85 : 0;
   const ca = fringe ? 0.14 : 0;
   return {
-    global: { root: '#root', mobileQuery: null, snapshot: { scale: 2 } }, // (crisp page pictures on Retina screens)
+    // Phones keep the library's default (mobileQuery ≤ 860px → CSS glass, no
+    // WebGL): mobile browsers scroll the page on their own thread, and a WebGL
+    // canvas can only catch up a frame later, so its glass trails the page.
+    global: { root: '#root', snapshot: { scale: 2 } }, // (crisp page pictures on Retina screens)
     defaults: { saturation: 1.5, brightness: 1.03, innerGlow: 0.1, borderOpacity: 0.3, shadowOpacity: 0.1, shadowBlur: 24, shadowY: 10 },
     groups: {
       nav: { layer: 'float', shape: 'capsule', tint: '#efede8', tintOpacity: 0.5, blur: 16, thickness: 26, bevel: 10, rimLight: light * 0.6 },
@@ -169,7 +172,7 @@ function App() {
         <span className="ver mono">v{GLASS_VERSION}</span>
         <G group="pill" className="pill" onClick={() => setDark(!dark)}>{dark ? 'Light' : 'Dark'}</G>
         <G as="a" group="pillDark" className="pill dark" href="https://www.npmjs.com/package/glassparency" style={{ display: 'grid', placeItems: 'center' }}>
-          Get it on npm
+          <span className="long">Get it on&nbsp;</span>npm
         </G>
       </Glass>
 
