@@ -15,16 +15,6 @@ npm install
 npm run dev        # http://localhost:5300
 ```
 
-## The library version
-
-Right now the page uses a preview build of glassparency (`vendor/glassparency-1.0.4-preview.tgz`): it
-already has the phone fix (`anchor: 'page'`) and the new switch lens, which aren't on npm yet. Once 1.0.4 is
-published, go back to npm:
-
-```bash
-npm install glassparency@latest && rm -r vendor
-```
-
 ## Deploy
 
 Every push to `main` builds the page and publishes it to GitHub Pages
