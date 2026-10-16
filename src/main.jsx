@@ -13,19 +13,37 @@
  */
 import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { GLASS_VERSION, Glass, GlassProvider, requestGlassRender, useGlass } from 'glassparency';
+import { GLASS_VERSION, Glass, GlassProvider, GlassSlider, GlassSwitch, requestGlassRender, useGlass } from 'glassparency';
 
-/** The page's glass groups, built from the live settings. */
+// Phones and tablets (touch): WebGL glass with the canvas anchored to the page.
+// Mobile browsers scroll on their own thread, so a window-fixed canvas would
+// draw its glass a frame behind the content; anchor "page" keeps it glued.
+// Testing: ?anchor=page forces it on a desktop; ?anchor=viewport turns glass on
+// at phone width with the old window-fixed canvas (to compare).
+const FORCED = typeof window !== 'undefined' ? new URLSearchParams(location.search).get('anchor') : null;
+const TOUCH = typeof window !== 'undefined' && (window.matchMedia?.('(pointer: coarse)').matches || FORCED === 'page');
+
+/** The page's glass config, built from the live settings. */
 function makeConfig({ frost, fringe, rim, thickness }) {
   const light = rim ? 0.85 : 0;
   const ca = fringe ? 0.14 : 0;
   return {
-    // Phones keep the library's default (mobileQuery ≤ 860px → CSS glass, no
-    // WebGL): mobile browsers scroll the page on their own thread, and a WebGL
-    // canvas can only catch up a frame later, so its glass trails the page.
-    global: { root: '#root', snapshot: { scale: 2 } }, // (crisp page pictures on Retina screens)
+    global: {
+      root: '#root',
+      background: 'auto',
+      snapshot: { scale: 2 }, // (crisp page pictures on Retina screens)
+      ...(TOUCH && FORCED !== 'viewport' ? { mobileQuery: null, anchor: 'page' } : {}),
+      ...(FORCED === 'viewport' ? { mobileQuery: null, anchor: 'viewport' } : {}),
+    },
     defaults: { saturation: 1.5, brightness: 1.03, innerGlow: 0.1, borderOpacity: 0.3, shadowOpacity: 0.1, shadowBlur: 24, shadowY: 10 },
     groups: {
+      // Buttons: the library's own topbar presets ("chip" capsules,
+      // "headerButton" circles: clear glass, as in DashboardPro's topbar),
+      // with the live settings' rim light / colour fringe on top.
+      // On the floating layer: these buttons sit on solid-colour tiles, and base
+      // glass is drawn BEHIND the page (the tile would cover it in WebGL mode).
+      chip: { layer: 'float', rimLight: 0.25 + light * 0.4, chromaticAberration: 0.03 + ca * 0.2, pressScale: 1.05, pressGlow: 0.5 },
+      headerButton: { layer: 'float', rimLight: 0.25 + light * 0.4, chromaticAberration: 0.03 + ca * 0.2, pressScale: 1.08, pressGlow: 0.6 },
       nav: { layer: 'float', shape: 'capsule', tint: '#efede8', tintOpacity: 0.5, blur: 16, thickness: 26, bevel: 10, rimLight: light * 0.6 },
       install: { layer: 'float', shape: 'capsule', tint: '#ffffff', tintOpacity: 0.55, blur: 10, thickness: 24, bevel: 10, rimLight: light * 0.6 },
       // Big lenses bend far more than live (SVG) glass can reach: WebGL, like a real lens.
@@ -38,18 +56,15 @@ function makeConfig({ frost, fringe, rim, thickness }) {
         layer: 'float', radius: 30, tint: '#111111', tintOpacity: 0.2, blur: frost ? 18 : 2,
         thickness: 46, bevel: 18, chromaticAberration: ca * 0.6, rimLight: light * 0.8, borderOpacity: 0.2,
       },
-      roundBtn: {
-        shape: 'circle', tint: '#ffffff', tintOpacity: 0.16, blur: 6, thickness: 24, bevel: 12, rimLight: light * 0.7,
-        pressScale: 1.08, pressGlow: 0.7, hover: { tintOpacity: 0.28 }, shadowOpacity: 0,
-      },
-      pill: { shape: 'capsule', tint: '#ffffff', tintOpacity: 0.62, thickness: 20, bevel: 10, rimLight: light * 0.5, pressScale: 1.04, pressGlow: 0.5, hover: { tintOpacity: 0.8 }, shadowOpacity: 0 },
-      pillDark: { shape: 'capsule', tint: '#111111', tintOpacity: 0.92, thickness: 20, bevel: 10, rimLight: light * 0.4, pressScale: 1.04, pressGlow: 0.35, textColor: '#efede8', shadowOpacity: 0 },
       row: {
         layer: 'float', radius: 22, tint: '#ffffff', tintOpacity: 0.3, blur: frost ? 5 : 0,
         thickness: 34, bevel: 14, chromaticAberration: ca * 0.6, rimLight: light * 0.7,
       },
-      toggle: { shape: 'capsule', tint: '#111111', tintOpacity: 0.18, thickness: 16, bevel: 8, rimLight: light * 0.5, shadowOpacity: 0, borderOpacity: 0.15 },
-      toggleOn: { shape: 'capsule', tint: '#111111', tintOpacity: 0.92, thickness: 16, bevel: 8, rimLight: light * 0.5, shadowOpacity: 0, borderOpacity: 0.15 },
+      // GlassSwitch / GlassSlider in this page's ink colour (on the orange tile).
+      switch: { tint: '#111111', tintOpacity: 0.22 },
+      switchOn: { tint: '#111111', tintOpacity: 0.9 },
+      sliderTrack: { tint: '#111111', tintOpacity: 0.2 },
+      sliderFill: { tint: '#111111', tintOpacity: 0.9 },
       drop: {
         layer: 'float', sampler: 'webgl', morph: 'drops', morphRadius: 48, shape: 'circle',
         tint: '#ffffff', tintOpacity: 0.06, blur: frost ? 1 : 0, thickness: 30, bevel: 30, ior: 1.45,
@@ -65,18 +80,19 @@ function makeConfig({ frost, fringe, rim, thickness }) {
         groups: {
           nav: { tint: '#0e0e10', tintOpacity: 0.5 },
           install: { tint: '#2a2a2e', tintOpacity: 0.55 },
-          pill: { tint: '#2a2a2e', tintOpacity: 0.7, hover: { tintOpacity: 0.85 } },
-          pillDark: { tint: '#f2f1ee', textColor: '#0e0e10' },
         },
       },
     },
   };
 }
 
-/** Any element with glass from a group (the hook version). */
-function G({ as: Tag = 'button', group, className, ...rest }) {
+/** Main actions: the chip as dark tinted glass (light in dark mode: it reads the page's ink colour). */
+const STRONG = { tint: 'var(--ink)', tintOpacity: 0.88, textColor: 'var(--paper)', hover: { tintOpacity: 0.96 } };
+
+/** Any element with glass from a group (the hook version), plus per-element looks. */
+function G({ as: Tag = 'button', group, glass, className, ...rest }) {
   const ref = useRef(null);
-  useGlass(ref, group);
+  useGlass(ref, group, glass);
   return <Tag ref={ref} className={className} {...rest} />;
 }
 
@@ -104,7 +120,8 @@ function Lens({ heroRef }) {
       const h = heroRef.current;
       if (!h) return;
       const w = h.clientWidth;
-      setPos((p) => p || { x: Math.min(w - 260, w * 0.3), y: 200 });
+      // (phones: a smaller lens, over "bends")
+      setPos((p) => p || (w < 600 ? { x: w * 0.42, y: 150 } : { x: Math.min(w - 260, w * 0.3), y: 200 }));
     };
     place();
     window.addEventListener('resize', place);
@@ -117,7 +134,15 @@ function Lens({ heroRef }) {
   const move = (e) => {
     const d = drag.current;
     if (!d) return;
-    setPos({ x: d.x + e.clientX - d.sx, y: d.y + e.clientY - d.sy });
+    // Keep at least a third of the lens inside the hero (a finger can't lose it).
+    const h = heroRef.current;
+    const size = e.currentTarget.offsetWidth;
+    const maxX = (h?.clientWidth ?? 1000) - size / 3;
+    const maxY = (h?.clientHeight ?? 800) - size / 3;
+    setPos({
+      x: Math.min(maxX, Math.max(-size * 2 / 3, d.x + e.clientX - d.sx)),
+      y: Math.min(maxY, Math.max(-size * 2 / 3, d.y + e.clientY - d.sy)),
+    });
     requestGlassRender();
   };
   const up = () => {
@@ -170,8 +195,8 @@ function App() {
           <a href="#principles">How it works</a>
         </div>
         <span className="ver mono">v{GLASS_VERSION}</span>
-        <G group="pill" className="pill" onClick={() => setDark(!dark)}>{dark ? 'Light' : 'Dark'}</G>
-        <G as="a" group="pillDark" className="pill dark" href="https://www.npmjs.com/package/glassparency" style={{ display: 'grid', placeItems: 'center' }}>
+        <G group="chip" className="pill" onClick={() => setDark(!dark)}>{dark ? 'Light' : 'Dark'}</G>
+        <G as="a" group="chip" glass={STRONG} className="pill dark" href="https://www.npmjs.com/package/glassparency" style={{ display: 'grid', placeItems: 'center' }}>
           <span className="long">Get it on&nbsp;</span>npm
         </G>
       </Glass>
@@ -191,7 +216,7 @@ function App() {
             </p>
             <Glass group="install" className="install lift mono">
               npm i glassparency
-              <G group="pillDark" className="pill dark" onClick={copy} style={{ fontFamily: 'inherit' }}>
+              <G group="chip" glass={STRONG} className="pill dark" onClick={copy} style={{ fontFamily: 'inherit' }}>
                 {copied ? 'Copied' : 'Copy'}
               </G>
             </Glass>
@@ -223,11 +248,11 @@ function App() {
                 </div>
               </div>
               <div className="controls">
-                <G group="roundBtn" className="round" aria-label="Previous"><Prev /></G>
-                <G group="roundBtn" className="round big" aria-label={playing ? 'Pause' : 'Play'} onClick={() => setPlaying(!playing)}>
+                <G group="headerButton" className="round" aria-label="Previous"><Prev /></G>
+                <G group="headerButton" className="round big" aria-label={playing ? 'Pause' : 'Play'} onClick={() => setPlaying(!playing)}>
                   {playing ? <Pause /> : <Play />}
                 </G>
-                <G group="roundBtn" className="round" aria-label="Next"><Next /></G>
+                <G group="headerButton" className="round" aria-label="Next"><Next /></G>
               </div>
             </Glass>
           </section>
@@ -246,7 +271,7 @@ function App() {
                   <b>{title}</b>
                   <small>{sub}</small>
                 </span>
-                <G group={settings[k] ? 'toggleOn' : 'toggle'} className="toggle" role="switch" aria-checked={settings[k]} aria-label={title} onClick={() => set(k, !settings[k])} />
+                <GlassSwitch checked={settings[k]} onChange={(v) => set(k, v)} aria-label={title} />
               </Glass>
             ))}
             <Glass group="row" className="row lift">
@@ -254,7 +279,7 @@ function App() {
                 <b>Thickness</b>
                 <small>How far light bends</small>
               </span>
-              <input type="range" min="8" max="80" value={settings.thickness} onChange={(e) => set('thickness', Number(e.target.value))} aria-label="Thickness" />
+              <GlassSlider className="thick" min={8} max={80} value={settings.thickness} onChange={(v) => set('thickness', v)} aria-label="Thickness" />
             </Glass>
           </section>
 
@@ -263,7 +288,7 @@ function App() {
             <Glass group="drop" className="drop lift" style={{ left: merged ? 'calc(50% - 105px)' : '10%' }} />
             <Glass group="drop" className="drop lift" style={{ left: merged ? 'calc(50% - 15px)' : 'calc(90% - 120px)' }} />
             <div className="tile-cta">
-              <G group="pillDark" className="pill dark lift" onClick={() => setMerged(!merged)}>{merged ? 'Split' : 'Merge'}</G>
+              <G group="chip" glass={STRONG} className="pill dark lift" onClick={() => setMerged(!merged)}>{merged ? 'Split' : 'Merge'}</G>
             </div>
           </section>
 

@@ -12,7 +12,7 @@
   "dependencies": {
     "@react-three/drei": "10.7.9",
     "@react-three/fiber": "9.8.2",
-    "glassparency": "^1.0.1",
+    "glassparency": "file:vendor/glassparency-1.0.4-preview.tgz",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "three": "0.186.1"

@@ -58,7 +58,7 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .ver { font-size: 13px; color: var(--muted); }
 
 /* Buttons */
-.pill { height: 40px; padding: 0 18px; border-radius: 999px; font-size: 14px; font-weight: 600; background: rgba(255, 255, 255, 0.7); }
+.pill { white-space: nowrap; height: 40px; padding: 0 18px; border-radius: 999px; font-size: 14px; font-weight: 600; background: rgba(255, 255, 255, 0.7); }
 .pill.dark { background: var(--ink); color: var(--paper); }
 .round { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: rgba(255, 255, 255, 0.6); }
 .round.big { width: 58px; height: 58px; }
@@ -131,11 +131,7 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 }
 .row b { font-weight: 600; font-size: 15px; display: block; }
 .row small { font-size: 13px; color: rgba(17, 17, 17, 0.6); }
-.row input[type='range'] { width: 150px; accent-color: var(--art-black); }
-.toggle { width: 52px; height: 32px; border-radius: 999px; position: relative; background: rgba(17, 17, 17, 0.2); flex: none; }
-.toggle::after { content: ''; position: absolute; top: 3px; left: 3px; width: 26px; height: 26px; border-radius: 50%; background: #fff; transition: left 0.25s cubic-bezier(.3, 1.4, .5, 1); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); }
-.toggle[aria-checked='true'] { background: var(--art-black); }
-.toggle[aria-checked='true']::after { left: 23px; }
+.row .thick { width: 160px; flex: none; } /* the glass slider (GlassSlider) */
 
 /* Morph tile */
 .stripes { background: repeating-linear-gradient(90deg, var(--art-black) 0 28px, var(--art-white) 28px 56px) center / 56px 100%; }
@@ -201,7 +197,7 @@ footer { display: flex; justify-content: space-between; padding: 28px 0 40px; fo
 
   .hero { padding: 104px 0 40px; }
   .display { font-size: clamp(48px, 15vw, 96px); }
-  .lens { display: none; } /* (a drag-with-the-mouse demo; on a phone it just hid the headline) */
+  .lens { width: 150px; height: 150px; } /* drag it with a finger */
   .hero-foot { gap: 24px; margin-top: 28px; }
   .lede { font-size: 16px; }
   .install { width: 100%; justify-content: space-between; height: 52px; padding-left: 18px; font-size: 14px; }
@@ -227,7 +223,7 @@ footer { display: flex; justify-content: space-between; padding: 28px 0 40px; fo
   .settings .numeral { font-size: 220px; right: -12px; bottom: -44px; }
   .row { padding: 12px 12px 12px 16px; gap: 12px; }
   .row small { display: block; font-size: 12px; line-height: 1.35; }
-  .row input[type='range'] { width: 120px; flex: none; }
+  .row .thick { width: 130px; }
 
   .stripes { min-height: 300px !important; }
   .type { min-height: 280px !important; }
@@ -238,7 +234,7 @@ footer { display: flex; justify-content: space-between; padding: 28px 0 40px; fo
   .principles h3 { font-size: 22px; }
   footer { flex-wrap: wrap; gap: 6px 16px; }
 }
-@media (max-width: 400px) {
-  .nav .long { display: none; } /* "Get it on npm" → "npm" */
+@media (max-width: 430px) {
+  .nav .long { display: none; } /* "Get it on npm" → "npm" (every phone width) */
   .install { font-size: 13px; }
 }
