@@ -1,0 +1,24 @@
+{
+  "name": "glassparency-site",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Showcase page for the glassparency npm package (liquid glass for the web).",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 5300",
+    "build": "vite build",
+    "preview": "vite preview --port 5310"
+  },
+  "dependencies": {
+    "@react-three/drei": "10.7.9",
+    "@react-three/fiber": "9.8.2",
+    "glassparency": "^1.0.1",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "three": "0.186.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "6.1.2",
+    "vite": "8.3.4"
+  }
+}
