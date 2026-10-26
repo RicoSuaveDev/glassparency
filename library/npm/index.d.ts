@@ -382,9 +382,9 @@ export interface GlassMorphOptions {
   reverseDuration?: number;
   /** Glass group of the film. Default: the target's group, else "panel". */
   group?: string;
-  /** The film's end tint / frost. Default: the target's resolved look. */
+  /** The film's end tint / frost. Default: the target's resolved look (it starts in `from`'s look). */
   look?: { tintOpacity?: number; blur?: number };
-  /** How far the drops reach to melt (px). Default 34. */
+  /** How far the liquid neck reaches before it snaps (px). Default 34. */
   morphRadius?: number;
   /** Glass layer of the film. Default "float". */
   layer?: GlassLayer;
@@ -404,8 +404,10 @@ export interface GlassMorph {
   cancel(): void;
 }
 /**
- * Morph `from` into `to` as liquid glass. `to` is any element laid out where
- * it ends up; hide it with the `hidden` attribute and glassMorph shows it.
+ * Morph `from` into `to` as liquid glass: the film starts as `from`'s own shape
+ * and look and swells into `to` (`from` is hidden while it plays). `to` is any
+ * element laid out where it ends up; hide it with the `hidden` attribute and
+ * glassMorph shows it.
  * Without WebGL glass (or with Reduce motion) it grows out of `from` with a
  * plain transform + fade instead.
  */

@@ -44,6 +44,26 @@ Under the hood:
 
 ![The same page in dark mode](https://cdn.jsdelivr.net/npm/glassparency@1.3.0/media/grid-dark.webp)
 
+### The controls in motion
+
+<!-- Animated WebPs live in the GitHub repo (library/npm/showcase, from client/src/glass/npm/showcase), not in the npm package, so installs stay small. -->
+
+| <img src="https://cdn.jsdelivr.net/gh/RicoSuaveDev/glassparency@main/library/npm/showcase/switch.webp" alt="GlassSwitch: the knob turns into clear glass while it is dragged across" width="360"> | <img src="https://cdn.jsdelivr.net/gh/RicoSuaveDev/glassparency@main/library/npm/showcase/slider.webp" alt="GlassSlider: a glass knob dragged along the track" width="360"> |
+|---|---|
+| [`GlassSwitch`](#switches-and-sliders): drag the knob and it turns to glass | [`GlassSlider`](#switches-and-sliders): a glass knob that bends the track |
+| <img src="https://cdn.jsdelivr.net/gh/RicoSuaveDev/glassparency@main/library/npm/showcase/checkbox-radio.webp" alt="GlassCheckbox and GlassRadio: a box is ticked and squishes, a radio is picked" width="360"> | <img src="https://cdn.jsdelivr.net/gh/RicoSuaveDev/glassparency@main/library/npm/showcase/text-field.webp" alt="GlassTextField: focused, typed into and cleared with the glass clear button" width="360"> |
+| [`GlassCheckbox` · `GlassRadio`](#checkboxes-radios-text-fields-tab-bars-sidebars-and-progress-bars): squish when pressed | [`GlassTextField`](#checkboxes-radios-text-fields-tab-bars-sidebars-and-progress-bars): focus glow and a glass clear button |
+| <img src="https://cdn.jsdelivr.net/gh/RicoSuaveDev/glassparency@main/library/npm/showcase/tab-bar.webp" alt="GlassTabBar: a magnifying glass lens slides across the tabs" width="360"> | <img src="https://cdn.jsdelivr.net/gh/RicoSuaveDev/glassparency@main/library/npm/showcase/sidebar.webp" alt="GlassSidebar: the glass lens slides down the list" width="360"> |
+| [`GlassTabBar`](#checkboxes-radios-text-fields-tab-bars-sidebars-and-progress-bars): press and slide, the lens magnifies | [`GlassSidebar`](#checkboxes-radios-text-fields-tab-bars-sidebars-and-progress-bars): the same lens, vertical |
+| <img src="https://cdn.jsdelivr.net/gh/RicoSuaveDev/glassparency@main/library/npm/showcase/progress.webp" alt="GlassProgress: fills with a glass bead on the end, then a busy liquid drop" width="360"> | <img src="https://cdn.jsdelivr.net/gh/RicoSuaveDev/glassparency@main/library/npm/showcase/button.webp" alt="Glass buttons swell, lean toward the pointer and wobble back" width="360"> |
+| [`GlassProgress`](#checkboxes-radios-text-fields-tab-bars-sidebars-and-progress-bars): a glass bead, and a liquid drop when busy | [Squish & stretch](#squish--stretch): buttons swell, lean and wobble back |
+| <img src="https://cdn.jsdelivr.net/gh/RicoSuaveDev/glassparency@main/library/npm/showcase/glass-ui.webp" alt="A glass-ui card pressed and released" width="360"> | <img src="https://cdn.jsdelivr.net/gh/RicoSuaveDev/glassparency@main/library/npm/showcase/shape-spring.webp" alt="A shape spring: circle to capsule to rounded square and back" width="360"> |
+| [`<glass-ui>`](#3-any-framework-the-glass-ui-element): glass as an HTML element | [Shape springs](#shape-springs): glass springs between shapes |
+
+<img src="https://cdn.jsdelivr.net/gh/RicoSuaveDev/glassparency@main/library/npm/showcase/morph.webp" alt="glassMorph: a glass button swells into a menu, then shrinks back into the button" width="728">
+
+[`glassMorph`](#morph-any-element-into-another-glassmorph): the button itself swells into the menu and melts back into it
+
 ---
 
 ## Three ways to use it
@@ -328,17 +348,18 @@ glassMorph(button, panel, { direction: 'out' });   // close one that is already 
 button.addEventListener('pointerenter', () => glassMorph.warm(button, panel));  // optional: picture ready early
 ```
 
-The film: a clear droplet swells out from behind `from`; a blob pulls away from it towards the target (the liquid
-neck stretches and snaps); it swells into the target's exact box and corner radius, swallowing the droplet, while
-the glass goes from clear to the target's look; then the target takes over with its own glass and its content fades
-in.
+The film: `from` itself becomes the glass. It starts as exactly `from` (same box, corner radius and glass look) and
+stretches and swells into the target's exact box and corner radius, with a liquid neck back to `from` when the
+target is further away. The glass blends from `from`'s look to the target's. Then the target takes over with its own
+glass and its content fades in. `from` is hidden only while the film plays, and closing lands back on its exact
+shape before it is shown again.
 
 | Option | Default | |
 |---|---|---|
 | `duration` / `reverseDuration` | 780 / 620 ms | Length of the film each way |
 | `group` | the target's group, else `panel` | Glass group the film is drawn with |
-| `look` | the target's look | End `tintOpacity` / `blur` of the film |
-| `morphRadius` | 34 | How far the drops reach to melt (px) |
+| `look` | the target's look | End `tintOpacity` / `blur` of the film (it starts in `from`'s look) |
+| `morphRadius` | 34 | How far the liquid neck reaches before it snaps (px) |
 | `layer` | `float` | Glass layer of the film |
 | `fadeContent` | `true` | Fade the target's content in at the end (and out first when closing) |
 | `direction` | `in` | `out` = the shown target melts back into `from` and is hidden |

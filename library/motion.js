@@ -25,17 +25,24 @@
  *    `from` is any element (a button, an icon, a card); `to` is any element
  *    laid out where it should end up — hide it with the `hidden` attribute
  *    and glassMorph shows it. The film:
- *      1. a clear droplet swells out from behind `from`;
- *      2. a blob pulls away from it towards `to` — the liquid neck
- *         stretches, then snaps;
- *      3. the blob swells into `to`'s exact box and corner radius and
- *         swallows the droplet; the glass goes from clear to `to`'s look;
- *      4. `to` takes over (its own glass, or its CSS) and its content fades in.
+ *      1. it starts as exactly `from` — same box, corner radius and glass
+ *         look — which takes over: `from`'s own glass is held back and its
+ *         content fades out;
+ *      2. that shape stretches and swells (springy) into `to`'s exact box
+ *         and corner radius, while a part of it stays on `from` and shrinks
+ *         away — a liquid neck when `to` is further off;
+ *      3. the glass blends from `from`'s look (tint, frost, thickness, rim…)
+ *         to `to`'s;
+ *      4. `to` takes over (its own glass, or its CSS) and its content fades
+ *         in; `from` fades back in (it is only hidden during the film).
+ *    Backwards (reverse() / direction "out") it lands back on `from`'s exact
+ *    shape and look, then `from` is shown again.
  *    How: two temporary empty <div>s in <body> with glass in ONE morph name,
  *    so one shader draws them as a single smooth distance field (merging,
  *    necking, splitting). They take `to`'s glass group + per-element props
- *    (or options.group), so the film lands exactly on `to`'s look. `to`'s own
- *    glass is suspended (registry `suspended`) until the film lands.
+ *    (or options.group), with the look blended from `from`'s resolved glass,
+ *    so the film starts on `from`'s look and lands exactly on `to`'s. Both
+ *    elements' own glass is suspended (registry `suspended`) while it plays.
  *    Morph glass refracts a picture of the page: the film's area is reserved
  *    for it (reserveSnapshotArea). Call glassMorph.warm(from, to) on hover /
  *    focus to have that picture ready before the click.
@@ -49,7 +56,7 @@
  */
 import { requestRender, getEntry, update } from './registry';
 import { resolveGlass } from './config';
-import { reserveSnapshotArea } from './snapshot';
+import { reserveSnapshotArea, snapshot, subscribeSnapshot } from './snapshot';
 import { attachGlass, getGlassProps, mergeGlassProps } from './useGlass';
 
 const reducedMotion = () => typeof window !== 'undefined' && Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
@@ -188,7 +195,13 @@ export function createShapeSpring(el, options = {}) {
 const OPEN_MS = 780; // the whole film, forwards
 const CLOSE_MS = 620; // backwards (after the content has faded)
 const FADE_MS = 180; // `to`'s content fading in / out
-const CLEAR = { tintOpacity: 0.04, blur: 0 }; // the film starts as clear glass
+const FROM_FADE_MS = 120; // `from`'s content fading out as the film takes it over
+const PICTURE_WAIT_MS = 300; // longest wait for a page picture before the film starts anyway
+/** The look the film blends from `from`'s glass to `to`'s (numbers in both). */
+const LOOK_KEYS = [
+  'tintOpacity', 'blur', 'thickness', 'bevel', 'ior', 'saturation', 'brightness', 'chromaticAberration',
+  'rimLight', 'innerGlow', 'borderOpacity', 'shadowOpacity', 'shadowBlur', 'shadowY', 'minify',
+];
 
 // --- Easing helpers -----------------------------------------------------------
 /** 0 → 1 between e0 and e1 (smooth). */
@@ -196,7 +209,6 @@ const smooth = (e0, e1, x) => {
   const u = clamp01((x - e0) / (e1 - e0));
   return u * u * (3 - 2 * u);
 };
-const easeInOut = (u) => (u < 0.5 ? 4 * u * u * u : 1 - (-2 * u + 2) ** 3 / 2);
 /** Overshoots a little past 1 and settles — the springy liquid feel. */
 const easeOutBack = (u, s = 1.25) => 1 + (s + 1) * (u - 1) ** 3 + s * (u - 1) ** 2;
 
@@ -218,55 +230,66 @@ function radiusOf(el, r) {
   return Math.min(parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0, half);
 }
 
-/**
- * One frame of the film at t (0 = only `from`, 1 = `to`).
- *   drop  — the droplet behind `from`: swells out, then is absorbed
- *   blob  — 0.06–0.40 pulls away from the droplet towards `to` (the neck
- *           stretches and snaps); 0.36–1 swells into `to`'s box, back over
- *           the droplet so they melt together again
- *   look  — clear while they're drops, `to`'s tint / frost as it lands
- *   content — opacity of `to`'s content (last 20%)
- * @param {object} F - `from`'s box  @param {object} T - `to`'s box
- * @param {{tintOpacity: number, blur: number}} end - `to`'s look
- */
-function filmFrame(t, F, T, end) {
-  const size = Math.max(8, Math.min(F.width, F.height)); // the droplet: from-sized circle
-  const dropC = { x: F.left + F.width / 2, y: F.top + F.height / 2 };
-
-  // 1) Droplet: drips out (0 → 20%), absorbed (72 → 100%).
-  const grow = Math.max(0, easeOutBack(clamp01(t / 0.2), 1.6));
-  const ds = size * grow * (1 - smooth(0.72, 1, t));
-  const drop = { left: dropC.x - ds / 2, top: dropC.y - ds / 2, width: ds, height: ds, radius: ds / 2 };
-
-  // 2a) A small drop pulls away towards `to` (the neck stretches, snaps).
-  // Far targets: about two droplets away; close ones: part of the way.
-  const tc = { x: T.left + T.width / 2, y: T.top + T.height / 2 };
-  const dist = Math.hypot(tc.x - dropC.x, tc.y - dropC.y);
-  const dir = dist > 1 ? { x: (tc.x - dropC.x) / dist, y: (tc.y - dropC.y) / dist } : { x: 0, y: 1 };
-  const reach = Math.min(size * 2.2, Math.max(size * 0.8, dist * 0.6));
-  const away = { x: dropC.x + dir.x * reach, y: dropC.y + dir.y * reach };
-  const pull = easeInOut(clamp01((t - 0.06) / 0.34));
-  const small = lerp(size * Math.min(1, grow), size * 1.35, pull);
-  const c = { x: lerp(dropC.x, away.x, pull), y: lerp(dropC.y, away.y, pull) };
-  let blob = { left: c.x - small / 2, top: c.y - small / 2, width: small, height: small };
-
-  // 2b) It swells into `to` (springy), back over the droplet.
-  const swell = t <= 0.36 ? 0 : easeOutBack(clamp01((t - 0.36) / 0.64), 1.1);
-  if (swell > 0) {
-    blob = {
-      left: lerp(blob.left, T.left, swell),
-      top: lerp(blob.top, T.top, swell),
-      width: lerp(blob.width, T.width, swell),
-      height: lerp(blob.height, T.height, swell),
-    };
+/** "#rgb" / "#rrggbb" → [r, g, b], else null. */
+function hexRgb(c) {
+  const m = typeof c === 'string' && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(c.trim());
+  if (!m) return null;
+  const h = m[1].length === 3 ? [...m[1]].map((x) => x + x).join('') : m[1];
+  return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
+}
+/** Two hex colours mixed (f 0 → a, 1 → b); anything else switches halfway. */
+function mixColor(a, b, f) {
+  const x = hexRgb(a);
+  const y = hexRgb(b);
+  if (!x || !y) return f < 0.5 ? a : b;
+  return '#' + x.map((v, i) => Math.round(lerp(v, y[i], f)).toString(16).padStart(2, '0')).join('');
+}
+/** Two resolved tints ({from, via, to, angle}) mixed; `via` only when both have one. */
+function mixTint(a, b, f) {
+  if (!a || !b) return f < 0.5 ? a : b;
+  const via = a.via && b.via ? mixColor(a.via, b.via, f) : f < 0.5 ? a.via : b.via;
+  return { from: mixColor(a.from, b.from, f), via, to: mixColor(a.to, b.to, f), angle: lerp(a.angle ?? 180, b.angle ?? 180, f) };
+}
+/** The film's look at f (0 = `from`'s glass, 1 = `to`'s): the LOOK_KEYS numbers + the tint. */
+function mixLook(a, b, f) {
+  const out = { tint: mixTint(a.tint, b.tint, f) };
+  for (const k of LOOK_KEYS) {
+    if (typeof b[k] !== 'number') continue;
+    out[k] = typeof a[k] === 'number' ? lerp(a[k], b[k], f) : b[k];
   }
-  const half = Math.max(0, Math.min(blob.width, blob.height) / 2);
-  blob.radius = Math.min(half, lerp(half, T.radius, smooth(0, 0.55, swell)));
+  return out;
+}
 
-  // 3) Look + content.
-  const f = smooth(0.3, 0.95, t);
-  const look = { tintOpacity: lerp(CLEAR.tintOpacity, end.tintOpacity, f), blur: lerp(CLEAR.blur, end.blur, f) };
-  return { drop, blob, look, content: smooth(0.8, 1, t) };
+/**
+ * One frame of the film at t (0 = exactly `from`, 1 = exactly `to`).
+ *   body   — starts as `from`'s own box and corner radius and swells
+ *            (springy) into `to`'s box and radius
+ *   anchor — stays on `from` and shrinks into its centre (15–65%): while
+ *            the body moves away the two melt into a liquid neck; when `to`
+ *            covers `from` it is simply swallowed
+ *   look   — 0 → 1 from `from`'s glass to `to`'s (mixLook)
+ * Played backwards (t 1 → 0) the same frames land back on `from`.
+ * @param {object} F - `from`'s box  @param {object} T - `to`'s box
+ */
+function filmFrame(t, F, T) {
+  // Body: `from` → `to` with a little overshoot (the springy liquid feel).
+  const s = easeOutBack(clamp01(t), 1.1);
+  const body = {
+    left: lerp(F.left, T.left, s),
+    top: lerp(F.top, T.top, s),
+    width: Math.max(0, lerp(F.width, T.width, s)),
+    height: Math.max(0, lerp(F.height, T.height, s)),
+  };
+  body.radius = Math.min(Math.min(body.width, body.height) / 2, lerp(F.radius, T.radius, smooth(0, 0.6, t)));
+
+  // Anchor: `from`'s box shrinking into its centre.
+  const k = 1 - smooth(0.15, 0.65, t);
+  const cx = F.left + F.width / 2;
+  const cy = F.top + F.height / 2;
+  const anchor = { left: cx - (F.width * k) / 2, top: cy - (F.height * k) / 2, width: F.width * k, height: F.height * k };
+  anchor.radius = Math.min(Math.min(anchor.width, anchor.height) / 2, F.radius * k);
+
+  return { body, anchor, look: smooth(0.1, 0.9, t) };
 }
 
 function placeFixed(el, r) {
@@ -291,9 +314,70 @@ function fade(to, inwards, keep) {
   return a;
 }
 
+/**
+ * `from` while the film plays: its own slab held back (the film draws it) and
+ * its content faded out; shown again when the film ends, either way.
+ */
+const fromFades = new WeakMap();
+function hideFrom(from) {
+  setSuspended(from, true);
+  if (fromFades.has(from)) return; // already hidden (a reversed film)
+  const a = from.animate?.([{ opacity: 1 }, { opacity: 0 }], { duration: FROM_FADE_MS, easing: 'ease-in', fill: 'forwards' });
+  fromFades.set(from, a || null);
+}
+function showFrom(from, animate) {
+  setSuspended(from, false);
+  if (!fromFades.has(from)) return;
+  fromFades.get(from)?.cancel();
+  fromFades.delete(from);
+  if (animate) from.animate?.([{ opacity: 0 }, { opacity: 1 }], { duration: FADE_MS, easing: 'ease-out' });
+}
+
+/** Does the current page picture cover `r` (window px, now)? */
+function pictureCovers(r) {
+  if (!snapshot.canvas) return false;
+  // The picture's window position now (it was taken at another scroll).
+  const x = snapshot.x - (window.scrollX - snapshot.scrollX);
+  const y = snapshot.y - (window.scrollY - snapshot.scrollY);
+  return x <= r.left && y <= r.top && x + snapshot.w >= r.right && y + snapshot.h >= r.bottom;
+}
+/**
+ * Run `go` once the page picture covers `r`, or after PICTURE_WAIT_MS anyway.
+ * The film starts full-size on `from`: without a picture its first frames
+ * would be drawn as flat white glass. Returns a cancel function.
+ */
+function whenPictured(r, go) {
+  if (pictureCovers(r)) {
+    go();
+    return () => {};
+  }
+  let off = null;
+  let t = 0;
+  const stop = () => {
+    off?.();
+    clearTimeout(t);
+  };
+  const run = () => {
+    stop();
+    go();
+  };
+  off = subscribeSnapshot(() => pictureCovers(r) && run());
+  t = setTimeout(run, PICTURE_WAIT_MS);
+  return stop;
+}
+/** `from`'s and `to`'s boxes together, cut to the window (the picture never reaches past it). */
+function filmBoxes(F, T) {
+  return {
+    left: Math.max(0, Math.min(F.left, T.left)),
+    top: Math.max(0, Math.min(F.top, T.top)),
+    right: Math.min(window.innerWidth, Math.max(F.left + F.width, T.left + T.width)),
+    bottom: Math.min(window.innerHeight, Math.max(F.top + F.height, T.top + T.height)),
+  };
+}
+
 /** The area a film covers (window px), for the page picture. */
 function filmArea(F, T) {
-  const pad = Math.min(F.width, F.height) * 2.5; // the droplet + the pulled-away drop
+  const pad = Math.max(24, Math.min(F.width, F.height)); // the body's overshoot
   return {
     left: Math.min(F.left - pad, T.left),
     top: Math.min(F.top - pad, T.top),
@@ -374,8 +458,10 @@ function runMorph(from, to, opts, forwards, resumeAt) {
     },
   };
   // End state: forwards = `to` shown with its own glass; backwards = hidden.
+  // Either way `from` is back (it is only hidden while the film plays).
   const finish = () => {
     done = true;
+    showFrom(from, true);
     setSuspended(to, false);
     to.style.removeProperty('visibility');
     if (forwards) unhide(to);
@@ -416,18 +502,26 @@ function runMorph(from, to, opts, forwards, resumeAt) {
   const toEntry = to.dataset.glassId ? getEntry(Number(to.dataset.glassId)) : null;
   const group = opts.group || toEntry?.group || 'panel';
   const baseProps = opts.group ? {} : { ...(getGlassProps(to) || {}) };
-  const resolved = resolveGlass(group, baseProps);
-  const end = { tintOpacity: opts.look?.tintOpacity ?? resolved.tintOpacity, blur: opts.look?.blur ?? resolved.blur };
+  // The film's look: `from`'s own glass at the start, `to`'s at the end
+  // (opts.look overrides its end tint / frost). A `from` without glass
+  // starts in `to`'s look.
+  const toLook = { ...resolveGlass(group, baseProps), ...(opts.look || {}) };
+  const fromEntry = from.dataset.glassId ? getEntry(Number(from.dataset.glassId)) : null;
+  const fromLook = fromEntry ? resolveGlass(fromEntry.group, fromEntry.props) : toLook;
 
   // The page picture the morph glass refracts.
   reserveSnapshotArea(key, filmArea(F, T));
   cleanups.push(() => reserveSnapshotArea(key, null));
 
   // `to` stays hidden (and its own slab undrawn) until the film lands on it.
-  to.style.visibility = 'hidden';
-  setSuspended(to, true);
+  // (Closing: it stays as it is until the film takes it over.)
+  if (forwards || resumeAt != null) {
+    to.style.visibility = 'hidden';
+    setSuspended(to, true);
+  }
 
-  // Two empty glass shapes in ONE morph name → drawn as one liquid surface.
+  // Two empty glass shapes in ONE morph name → drawn as one liquid surface:
+  // the body (becomes `to`) and the anchor (stays on `from`, shrinks away).
   const shapes = [0, 1].map(() => {
     const d = document.createElement('div');
     d.setAttribute('aria-hidden', 'true');
@@ -444,10 +538,9 @@ function runMorph(from, to, opts, forwards, resumeAt) {
     layer: opts.layer,
     shape: 'roundedRectangle',
     radius: Math.max(0, Math.round(radius * 10) / 10),
-    tintOpacity: look.tintOpacity,
-    blur: look.blur,
+    ...look,
   });
-  const handles = shapes.map((d) => attachGlass(d, group, props(CLEAR, 0)));
+  const handles = shapes.map((d) => attachGlass(d, group, props(mixLook(fromLook, toLook, forwards ? 0 : 1), 0)));
   cleanups.push(() => {
     handles.forEach((h) => h.destroy());
     shapes.forEach((d) => d.remove());
@@ -456,11 +549,12 @@ function runMorph(from, to, opts, forwards, resumeAt) {
 
   const draw = (t) => {
     currentT = t;
-    const f = filmFrame(t, F, T, end);
-    placeFixed(shapes[0], f.drop);
-    placeFixed(shapes[1], f.blob);
-    handles[0].setProps(props(f.look, f.drop.radius));
-    handles[1].setProps(props(f.look, f.blob.radius));
+    const f = filmFrame(t, F, T);
+    const look = mixLook(fromLook, toLook, f.look);
+    placeFixed(shapes[0], f.anchor);
+    placeFixed(shapes[1], f.body);
+    handles[0].setProps(props(look, f.anchor.radius));
+    handles[1].setProps(props(look, f.body.radius));
     requestRender();
   };
 
@@ -482,45 +576,64 @@ function runMorph(from, to, opts, forwards, resumeAt) {
     if (cancelled) return;
     if (forwards) {
       // `to` takes over, with its own glass, and its content fades in. The
-      // film shapes stay one more frame under it (no gap between the two).
+      // film shapes stay under it (no gap between the two): one frame, or —
+      // when the browser draws `to`'s glass on the element itself (live
+      // glass), which fades in with its content — until the fade is done.
+      // `from` comes back after that (finish), behind a solid `to`.
       setSuspended(to, false);
       to.style.removeProperty('visibility');
-      if (opts.fadeContent) fade(to, true, false);
-      requestAnimationFrame(() => {
+      const a = opts.fadeContent ? fade(to, true, false) : null;
+      const end = () => {
         cleanup();
         finish();
-      });
+      };
+      if (a && drawnOnElement(to)) timer = setTimeout(end, FADE_MS);
+      else requestAnimationFrame(end);
     } else {
       cleanup();
       finish();
     }
   };
 
-  if (resumeAt != null) {
-    // Continuing a reversed film: straight on from that frame, for the share
-    // of the film that's left (`to` is already hidden behind the film).
-    const goal = forwards ? 1 : 0;
-    play(resumeAt, goal, Math.max(60, Math.abs(goal - resumeAt) * (forwards ? opts.duration : opts.reverseDuration)));
-  } else if (forwards) {
-    play(0, 1, opts.duration);
-  } else {
-    // Backwards: `to`'s content fades out first (with its own glass still
-    // on), then the film takes over from it and melts back into `from`.
-    to.style.removeProperty('visibility');
-    setSuspended(to, false);
-    const out = opts.fadeContent ? fade(to, false, true) : null;
-    if (out) cleanups.push(() => out.cancel());
-    else fades.get(to)?.cancel();
-    timer = setTimeout(
-      () => {
-        if (cancelled) return;
-        to.style.visibility = 'hidden';
-        setSuspended(to, true);
-        play(1, 0, opts.reverseDuration);
-      },
-      out ? FADE_MS : 0
-    );
-  }
+  // Start once the page picture is there (`from` and `to` stay as they are
+  // until then — at most PICTURE_WAIT_MS).
+  const begin = () => {
+    if (resumeAt != null) {
+      // Continuing a reversed film: straight on from that frame, for the share
+      // of the film that's left (`to` is already hidden behind the film).
+      const goal = forwards ? 1 : 0;
+      hideFrom(from);
+      play(resumeAt, goal, Math.max(60, Math.abs(goal - resumeAt) * (forwards ? opts.duration : opts.reverseDuration)));
+    } else if (forwards) {
+      // The film starts as exactly `from` (box, radius, look): it takes over.
+      hideFrom(from);
+      play(0, 1, opts.duration);
+    } else {
+      // Backwards: `to`'s content fades out first (with its own glass still
+      // on), then the film takes over from it and melts back into `from`.
+      // `from` is hidden from the start (the film's first frames don't reach
+      // it, and it would show through `to` while that fades).
+      to.style.removeProperty('visibility');
+      setSuspended(to, false);
+      hideFrom(from);
+      const out = opts.fadeContent ? fade(to, false, true) : null;
+      if (out) cleanups.push(() => out.cancel());
+      else fades.get(to)?.cancel();
+      // Live glass fades out with `to`'s content: the film's first frame
+      // (exactly `to`) is drawn under it meanwhile, so the frost stays.
+      if (out && drawnOnElement(to)) draw(1);
+      timer = setTimeout(
+        () => {
+          if (cancelled) return;
+          to.style.visibility = 'hidden';
+          setSuspended(to, true);
+          play(1, 0, opts.reverseDuration);
+        },
+        out ? FADE_MS : 0
+      );
+    }
+  };
+  cleanups.push(whenPictured(filmBoxes(F, T), begin));
   return handle;
 }
 
@@ -552,6 +665,12 @@ glassMorph.warm = function warm(from, to) {
     reserveSnapshotArea(key, null);
   };
 };
+
+/** Is the element's glass drawn by the browser on the element itself (live.js), not on a canvas? */
+function drawnOnElement(el) {
+  const id = Number(el.dataset.glassId);
+  return Boolean(id && getEntry(id)?.liveMode);
+}
 
 /** Suspend / resume an element's own slab (no-op without glass). */
 function setSuspended(el, on) {
