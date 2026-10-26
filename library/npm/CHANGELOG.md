@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.0 — 2026-10-26
+
+- New: glassMorph(from, to) — Apple's liquid morph between any two elements (a button grows into a menu, card or panel), with reverse() from mid-film, glassMorph.warm() and a useGlassMorph hook; a grow-and-fade fallback where WebGL glass isn't running.
+- New: shape springs — createShapeSpring(el).to({ width, height, radius }) and useShapeSpring(): elements spring and wobble between shapes.
+- New: textColor "auto" picks light or dark text (textLight / textDark) by contrast with what's really behind the glass; WebGL glass samples it on the GPU without stalling.
+- New: <glass-ui group="card" props='{…}'> — glass as an HTML element for any framework (React 19, Vue, Svelte, plain HTML), registered automatically.
+- New: automatic quality (global.quality, default "auto"): full quality, stepped down only while animating glass runs too slow, back up once smooth; getGlassQuality() reports the level.
+- New: addGlassPresets() for preset packs that every configureGlass() call keeps; getGlassProps() / mergeGlassProps() to read or change some of an element's props.
+- Fixed: the TypeScript types check cleanly with React 19.
+- The source is now on GitHub (library/ in RicoSuaveDev/glassparency), with a build check on every pull request.
+
 ## 1.2.1 — 2026-10-24
 
 - Fixed: WebGL glass (lenses, morph drops) could take until a tab switch to appear on pages with animated controls.
