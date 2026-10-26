@@ -28,6 +28,7 @@ import {
   requestGlassRender,
   useGlass,
 } from 'glassparency';
+import { GALLERY_GROUPS, Gallery } from './gallery';
 
 // Phones and tablets (touch): WebGL glass with the canvas anchored to the page.
 // Mobile browsers scroll on their own thread, so a window-fixed canvas would
@@ -51,6 +52,8 @@ function makeConfig({ frost, fringe, rim, thickness }) {
     },
     defaults: { saturation: 1.5, brightness: 1.03, innerGlow: 0.1, borderOpacity: 0.3, shadowOpacity: 0.1, shadowBlur: 24, shadowY: 10 },
     groups: {
+      // The "Every control" tiles (gallery.jsx): their own copies of the presets.
+      ...GALLERY_GROUPS,
       // Buttons: the library's own topbar presets ("chip" capsules,
       // "headerButton" circles: clear glass, as in DashboardPro's topbar),
       // with the live settings' rim light / colour fringe on top.
@@ -356,6 +359,7 @@ function App() {
         <div className="links">
           <a href="https://www.npmjs.com/package/glassparency">Docs</a>
           <a href="#bento">Examples</a>
+          <a href="#controls">Controls</a>
           <a href="#principles">How it works</a>
         </div>
         <span className="ver mono">v{GLASS_VERSION}</span>
@@ -468,6 +472,9 @@ function App() {
           <SidebarTile />
           <StylesTile />
         </div>
+
+        {/* Every control from the README animations, live (gallery.jsx) */}
+        <Gallery />
 
         <section className="principles" id="principles">
           <div>

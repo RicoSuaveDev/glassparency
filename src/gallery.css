@@ -1,0 +1,139 @@
+/* =============================================================================
+   "Every control" (gallery.jsx) — the README animations' tiles, live.
+   The same artwork, words and element sizes as the screenshots (640×400
+   tiles); the tiles scale with the page, and on phones get taller instead.
+   Classes are prefixed gx- (the bento above has its own .tile, .label…).
+   No transform / filter / backdrop-filter on any ancestor of the glass.
+   ========================================================================== */
+.gx { padding: 72px 0 16px; scroll-margin-top: 90px; }
+.gx-head { display: grid; grid-template-columns: auto 1fr; gap: 40px; align-items: end; margin-bottom: 28px; }
+.gx-head h2 { margin: 0; font-size: clamp(40px, 6vw, 72px); font-weight: 800; letter-spacing: -0.05em; line-height: 0.95; }
+.gx-head p { margin: 0; max-width: 420px; justify-self: end; color: var(--muted); font-size: 17px; line-height: 1.45; }
+
+.gx-grid {
+  /* One tile's width: two columns on desktop, one on narrow screens. */
+  --gx-w: calc((min(1240px, 100vw - 48px) - 16px) / 2);
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px;
+}
+@media (max-width: 900px) {
+  .gx-head { grid-template-columns: 1fr; gap: 14px; }
+  .gx-head p { justify-self: start; }
+  .gx-grid { --gx-w: min(1240px, 100vw - 48px); grid-template-columns: 1fr; }
+}
+/* Phones: the morph button clears the tile's label, and the lab tile is
+   taller so its open menu and card don't overlap. */
+@media (max-width: 600px) {
+  .gx-morph-area { height: 250px; margin-top: 50px; }
+  .gx-tile:has(.gx-toy) { height: 460px; }
+}
+
+/* The tile: artwork behind, element centred on top (16:10 like the screenshots;
+   at least 340px tall on phones — a height, not aspect-ratio + min-height,
+   which would force the tile wider than the screen). */
+.gx-tile {
+  position: relative; height: max(340px, calc(var(--gx-w) * 0.625)); border-radius: 28px; overflow: hidden;
+  display: grid; place-items: center; color: #111;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif;
+}
+.gx-art { position: absolute; inset: 0; z-index: 0; }
+.gx-word {
+  position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); z-index: 0;
+  text-align: center; white-space: nowrap; line-height: 1; font-weight: 900;
+  font-size: calc(var(--gx-w) * 0.234); letter-spacing: calc(var(--gx-w) * -0.0094);
+}
+.gx-label {
+  position: absolute; left: 20px; top: 18px; z-index: 1; padding: 7px 12px; border-radius: 999px;
+  background: rgba(255, 255, 255, 0.88); color: #111; font-size: 13px; font-weight: 600; line-height: 1;
+}
+.gx-stage {
+  position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 22px;
+  max-width: calc(100% - 32px);
+}
+
+/* Artwork palettes (flat colour: stripes, checks, circles, a colour wheel). */
+.gx-art.orange { background: repeating-linear-gradient(90deg, #ff6b2c 0 46px, #ffd23f 46px 92px); }
+.gx-art.orange ~ .gx-word { color: #111; }
+.gx-art.cobalt { background: repeating-linear-gradient(135deg, #2b4bf2 0 40px, #f4f1ea 40px 80px); }
+.gx-art.cobalt ~ .gx-word { color: #ff3d7f; }
+.gx-art.mint {
+  background:
+    radial-gradient(circle at 20% 30%, #ff3d7f 0 90px, transparent 91px),
+    radial-gradient(circle at 80% 70%, #2b4bf2 0 110px, transparent 111px),
+    #7be0b4;
+}
+.gx-art.mint ~ .gx-word { color: #111; }
+.gx-art.pink { background: repeating-linear-gradient(0deg, #ff3d7f 0 34px, #111 34px 68px); }
+.gx-art.pink ~ .gx-word { color: #ffd23f; }
+.gx-art.check { background: repeating-conic-gradient(#111 0 25%, #f4f1ea 0 50%) 0 0 / 80px 80px; }
+.gx-art.check ~ .gx-word { color: #ff6b2c; }
+.gx-art.sun { background: conic-gradient(from 0deg, #ffd23f, #ff6b2c, #ff3d7f, #2b4bf2, #7be0b4, #ffd23f); }
+.gx-art.sun ~ .gx-word { color: #fff; }
+
+/* --- Elements (screenshot sizes, never wider than the tile) ------------------ */
+/* The backgrounds are each element's look WITHOUT glass (no WebGL, phones'
+   CSS layout…); with glass on, the library draws the glass instead. */
+.gx-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 22px 28px; align-items: center; }
+.gx-btn { border: 0; border-radius: 999px; background: rgba(255, 255, 255, 0.7); font: 600 18px/1 inherit; color: #111; padding: 16px 30px; cursor: pointer; }
+.gx-slider { width: min(360px, calc(var(--gx-w) - 64px)); }
+.gx-prog-hit { padding: 16px 0; cursor: pointer; }
+.gx-prog { width: min(380px, calc(var(--gx-w) - 64px)); }
+.gx-field { width: min(380px, calc(var(--gx-w) - 64px)); }
+.gx-check-row { display: flex; flex-direction: column; gap: 16px; padding: 22px 28px; border-radius: 22px; background: rgba(255, 255, 255, 0.75); }
+.gx-check-row .gx-row { gap: 14px 22px; }
+.gx-tabbar { display: flex; padding: 4px; max-width: 100%; }
+.gx-tab {
+  border: 0; background: none; color: #111; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  width: 92px; flex: 0 1 92px; min-width: 0; padding: 10px 0 8px; font: 600 11px/1 inherit; cursor: pointer;
+}
+.gx-tab svg, .gx-side-item svg { width: 26px; height: 26px; }
+.gx-sidebar { display: flex; flex-direction: column; padding: 10px; width: 250px; border-radius: 22px; background: rgba(255, 255, 255, 0.75); }
+.gx-side-item {
+  border: 0; background: none; color: #111; display: flex; align-items: center; gap: 12px; padding: 12px 14px;
+  font: 600 15px/1 inherit; cursor: pointer; text-align: left;
+}
+.gx-side-item svg { width: 20px; height: 20px; }
+.gx-card { display: block; width: min(340px, calc(var(--gx-w) - 64px)); padding: 26px 28px; border-radius: 26px; background: rgba(255, 255, 255, 0.75); }
+.gx-card h3 { margin: 0 0 6px; font-size: 22px; letter-spacing: normal; }
+.gx-card p { margin: 0; font-size: 15px; opacity: 0.8; }
+
+/* glassMorph: the button and its menu share the top-left corner. */
+.gx-morph-area { position: relative; width: min(420px, calc(var(--gx-w) - 64px)); height: 280px; }
+.gx-morph-btn { position: absolute; left: 0; top: 0; border: 0; border-radius: 999px; background: rgba(255, 255, 255, 0.7); font: 600 16px/1 inherit; color: #111; padding: 14px 24px; cursor: pointer; }
+.gx-morph-panel { position: absolute; left: 0; top: 0; display: flex; flex-direction: column; width: min(300px, 100%); padding: 18px; border-radius: 22px; background: rgba(253, 253, 255, 0.85); }
+.gx-morph-panel button {
+  padding: 11px 12px; border: 0; border-radius: 12px; background: none; color: #111; cursor: pointer;
+  font: 600 16px/1.2 inherit; text-align: left;
+}
+.gx-morph-panel button + button { border-top: 1px solid rgba(0, 0, 0, 0.08); border-radius: 0; }
+.gx-morph-panel button:hover { background: rgba(0, 0, 0, 0.05); }
+
+/* createShapeSpring: the glass button the spring resizes (inline size). */
+.gx-spring { display: grid; place-items: center; border: 0; border-radius: 60px; background: rgba(255, 255, 255, 0.7); font: 700 17px/1 inherit; color: #111; cursor: pointer; overflow: hidden; }
+
+/* The glass lab's morph menus (DashboardPro glassUiLab/toys.css). */
+.gx-stage:has(.gx-toy) { position: static; } /* (the toy is laid out in the whole tile) */
+.gx-toy { position: absolute; inset: 0; z-index: 2; }
+.gx-toy-buttons { position: absolute; top: 64px; left: 20px; display: flex; gap: 14px; }
+.gx-toy-btn {
+  position: relative; width: 52px; height: 52px; display: grid; place-items: center; padding: 0; border: 0;
+  border-radius: 50%; background: rgba(120, 120, 128, 0.3); color: #111; cursor: pointer;
+}
+.gx-toy-btn svg { width: 22px; height: 22px; }
+.gx-toy-menu {
+  position: absolute; top: 132px; left: 20px; display: flex; flex-direction: column; width: 200px; padding: 8px;
+  border-radius: 22px; background: rgba(255, 255, 255, 0.8);
+}
+.gx-toy-menu button {
+  padding: 10px 12px; border: 0; border-radius: 12px; background: transparent; color: #111;
+  font: inherit; font-size: 14px; text-align: left; cursor: pointer;
+}
+.gx-toy-menu button:hover { background: rgba(120, 120, 128, 0.18); }
+.gx-toy-card {
+  position: absolute; right: 20px; bottom: 20px; display: flex; flex-direction: column; gap: 6px;
+  width: min(300px, calc(100% - 40px)); padding: 18px 20px; border-radius: 30px;
+  background: rgba(255, 255, 255, 0.8); color: #111; font-size: 14px;
+}
+.gx-toy-card strong { font-size: 18px; }
+
+/* The morph hooks hide their targets with the `hidden` attribute. */
+.gx-morph-panel[hidden], .gx-toy-menu[hidden], .gx-toy-card[hidden] { display: none; }
