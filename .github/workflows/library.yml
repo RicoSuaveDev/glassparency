@@ -1,0 +1,36 @@
+# Builds and smoke-tests the library (library/) on every pull request that
+# touches it, and on pushes to main — so a contribution that breaks the npm
+# package shows up as a failed check before it's merged.
+# The same command a contributor runs locally: npm install && npm run build
+# (library/npm/build.mjs: ES module, CommonJS and the one-file script, output
+# checks, and a Node load test incl. a server render).
+name: Library build
+
+on:
+  pull_request:
+    paths:
+      - 'library/**'
+      - '.github/workflows/library.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'library/**'
+      - '.github/workflows/library.yml'
+  workflow_dispatch: # (also runnable by hand from the Actions tab)
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: library
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - run: npm run build
