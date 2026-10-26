@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.1 — 2026-10-26
+
+- glassMorph grows the button itself into the target, in the button's own
+  glass look, and closing lands back on it (no more round droplet)
+- Fixed the morph's first frames showing flat white glass, and live glass
+  flashing unfrosted as the target's content faded
+- README: animated gallery of the glass controls
+
 ## 1.3.0 — 2026-10-26
 
 - New: glassMorph(from, to) — Apple's liquid morph between any two elements (a button grows into a menu, card or panel), with reverse() from mid-film, glassMorph.warm() and a useGlassMorph hook; a grow-and-fade fallback where WebGL glass isn't running.
