@@ -10,6 +10,22 @@ components and hooks, a one-file script for any site, and a `<glass-ui>` element
 
 **[See it live →](https://ricosuavedev.github.io/glassparency/)**
 
+| <img src="library/npm/showcase/switch.webp" alt="GlassSwitch: the knob turns into clear glass while it is dragged across" width="360"> | <img src="library/npm/showcase/slider.webp" alt="GlassSlider: a glass knob dragged along the track" width="360"> |
+|---|---|
+| `GlassSwitch`: drag the knob and it turns to glass | `GlassSlider`: a glass knob that bends the track |
+| <img src="library/npm/showcase/checkbox-radio.webp" alt="GlassCheckbox and GlassRadio: a box is ticked and squishes, a radio is picked" width="360"> | <img src="library/npm/showcase/text-field.webp" alt="GlassTextField: focused, typed into and cleared with the glass clear button" width="360"> |
+| `GlassCheckbox` · `GlassRadio`: squish when pressed | `GlassTextField`: focus glow and a glass clear button |
+| <img src="library/npm/showcase/tab-bar.webp" alt="GlassTabBar: a magnifying glass lens slides across the tabs" width="360"> | <img src="library/npm/showcase/sidebar.webp" alt="GlassSidebar: the glass lens slides down the list" width="360"> |
+| `GlassTabBar`: press and slide, the lens magnifies | `GlassSidebar`: the same lens, vertical |
+| <img src="library/npm/showcase/progress.webp" alt="GlassProgress: fills with a glass bead on the end, then a busy liquid drop" width="360"> | <img src="library/npm/showcase/button.webp" alt="Glass buttons swell, lean toward the pointer and wobble back" width="360"> |
+| `GlassProgress`: a glass bead, and a liquid drop when busy | Squish & stretch: buttons swell, lean and wobble back |
+| <img src="library/npm/showcase/glass-ui.webp" alt="A glass-ui card pressed and released" width="360"> | <img src="library/npm/showcase/shape-spring.webp" alt="A shape spring: circle to capsule to rounded square and back" width="360"> |
+| `<glass-ui>`: glass as an HTML element | Shape springs: glass springs between shapes |
+
+<img src="library/npm/showcase/morph.webp" alt="glassMorph: a glass button swells into a menu, then shrinks back into the button" width="728">
+
+`glassMorph`: the button itself swells into the menu and melts back into it
+
 ## Get the library
 
 **npm** (React 19 apps, or any bundler):
