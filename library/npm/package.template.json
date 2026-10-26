@@ -1,0 +1,76 @@
+{
+  "$comment": "Template for the published package.json. build.mjs copies it into the build folder (minus this comment). The release script (scripts/glass-release.sh) bumps \"version\" here. To rename the package, change \"name\" (check it is free first: npm view <name>).",
+  "name": "glassparency",
+  "version": "1.2.1",
+  "description": "Apple-style Liquid Glass for the web: real refraction of the page (WebGL + live SVG filters), squircle rims, specular light, liquid morphing, light/dark themes and an automatic CSS fallback. React hooks plus a no-React script for any site.",
+  "keywords": [
+    "liquid-glass",
+    "glass",
+    "glassmorphism",
+    "refraction",
+    "webgl",
+    "three",
+    "react-three-fiber",
+    "react",
+    "ui",
+    "apple",
+    "backdrop-filter"
+  ],
+  "license": "MIT",
+  "homepage": "https://ricosuavedev.github.io/glassparency/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RicoSuaveDev/glassparency.git",
+    "directory": "library"
+  },
+  "bugs": {
+    "url": "https://github.com/RicoSuaveDev/glassparency/issues"
+  },
+  "author": "RicoSuaveDev",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./glass.css": "./dist/glass.css",
+    "./glass.config.json": "./dist/glass.config.json",
+    "./package.json": "./package.json"
+  },
+  "unpkg": "./dist/glassparency.standalone.js",
+  "jsdelivr": "./dist/glassparency.standalone.js",
+  "files": [
+    "dist",
+    "media",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "sideEffects": [
+    "*.css",
+    "./dist/glassparency.standalone.js"
+  ],
+  "peerDependencies": {
+    "@react-three/drei": "^10.7.0",
+    "@react-three/fiber": "^9.0.0",
+    "react": ">=19 <19.4",
+    "react-dom": ">=19 <19.4",
+    "three": ">=0.159.0"
+  },
+  "dependencies": {
+    "@zumer/snapdom": "3.2.0",
+    "maath": "^0.10.8"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

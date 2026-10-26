@@ -1,0 +1,468 @@
+/* =============================================================================
+ * glass/glass.css — Hand the look over from CSS glass to WebGL glass
+ * =============================================================================
+ * (Plus the one rule that isn't a hand-over: <glass-ui> is a block element
+ * by default — :where() keeps it at zero specificity, so any CSS wins.)
+ * Everything here only applies while <html data-glass="on"> (set by
+ * GlassProvider once the WebGL glass has drawn its first frame). Without it
+ * — WebGL unavailable, "Reduce transparency" on, glass switched off in
+ * glass.config.json — the app's normal CSS glass is untouched.
+ *
+ * useGlass() marks each glass element with data-glass-active (and optional
+ * data-glass-* flags from its config). !important is needed to win over the
+ * components' own CSS Module rules (including their :hover backgrounds).
+ *
+ * PER-ELEMENT HAND-OVER: the element's own look (background, blur, border,
+ * shadow) is only removed once its WebGL slab is actually on screen —
+ * data-glass-drawn, set by GlassCanvas in the frame it's drawn — or, for live
+ * glass (data-glass-live, Chromium), straight away (it's CSS itself).
+ * Until then the element keeps its normal CSS glass, so a new dialog/menu is
+ * never shown without its panel while its canvas starts up.
+ * Layout rules (padding, radius, text) still apply from the start, so
+ * nothing moves when the glass takes over.
+ * ========================================================================== */
+
+/* The glass is the element's background now. */
+html[data-glass='on'] [data-glass-active]:is([data-glass-drawn], [data-glass-live]) {
+  background: transparent !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+/* Live glass (live.js, Chromium): the glass is the element's ::before layer,
+   inset by the config's padding, with its own corner radius, tint, border,
+   drop shadow and rim light — so all of them follow the glass shape. In
+   "live" mode it bends the real page behind it (SVG filter); "tint" mode
+   (glass inside live glass) is the same layer without the bend. */
+html[data-glass='on'] [data-glass-active][data-glass-live] {
+  isolation: isolate; /* keeps the -1 z-index layer inside the element */
+}
+html[data-glass='on'] [data-glass-active][data-glass-live][data-glass-pos] {
+  position: relative; /* the layer needs a positioned element */
+}
+html[data-glass='on'] [data-glass-active][data-glass-live]::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  box-sizing: border-box;
+  border-radius: var(--glass-live-radius, inherit);
+  background: var(--glass-live-bg);
+  border: var(--glass-live-border, 0 solid transparent);
+  box-shadow: var(--glass-live-shadow, none);
+  -webkit-backdrop-filter: var(--glass-live-filter, none);
+  backdrop-filter: var(--glass-live-filter, none);
+  pointer-events: none;
+}
+
+/* padding: the element (glass + content) moves in from where it was. */
+html[data-glass='on'] [data-glass-active][data-glass-padded] {
+  margin: var(--glass-margin) !important;
+}
+html[data-glass='on'] [data-glass-active][data-glass-padded][data-glass-sticky] {
+  top: var(--glass-sticky-top) !important;
+}
+
+/* Corners follow the glass shape (capsule buttons, rounded sidebar…). */
+html[data-glass='on'] [data-glass-active][data-glass-radius] {
+  border-radius: var(--glass-radius) !important;
+}
+
+/* Press glow: a light spot under the pointer, eased via --glass-glow
+   (inherits, so the ::before layer sees the animated value). */
+@property --glass-glow {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+html[data-glass='on'] [data-glass-active][data-glass-live='live'] {
+  transition: --glass-glow 0.35s ease-out;
+}
+
+/* The element's own CSS border / shadow step aside (the glass draws its
+   own, matching its shape) unless keepBorder / keepShadow is true. */
+html[data-glass='on'] [data-glass-active]:is([data-glass-drawn], [data-glass-live])[data-glass-border='off'] {
+  border-color: transparent !important;
+}
+html[data-glass='on'] [data-glass-active]:is([data-glass-drawn], [data-glass-live])[data-glass-shadow='off'] {
+  box-shadow: none !important;
+}
+
+/* textColor / font / fontWeight / iconColor / iconSize from the config */
+html[data-glass='on'] [data-glass-active][data-glass-text] {
+  color: var(--glass-text) !important;
+}
+html[data-glass='on'] [data-glass-active][data-glass-font] {
+  font-family: var(--glass-font) !important;
+}
+html[data-glass='on'] [data-glass-active][data-glass-weight] {
+  font-weight: var(--glass-weight) !important;
+}
+html[data-glass='on'] [data-glass-active][data-glass-icon-color] svg {
+  color: var(--glass-icon-color) !important;
+}
+html[data-glass='on'] [data-glass-active][data-glass-icon-size] svg {
+  width: var(--glass-icon-size) !important;
+  height: var(--glass-icon-size) !important;
+}
+
+/* ==========================================================================
+ * Glass switched OFF for an element ("enabled": false in glass.config.json
+ * or a live tuning panel) — [data-glass-plain], set by useGlass.js.
+ * The element keeps its normal layout (none of the rules above apply: they
+ * all need [data-glass-active]), but the look its group sets itself is plain
+ * CSS: tint → background, border, drop shadow, shape/radius, text / font /
+ * icon. Not tied to html[data-glass], so it works with the glass on, off or
+ * unavailable (phones). Variables are only set for keys the group sets.
+ * ========================================================================== */
+[data-glass-plain][data-glass-plain-bg] {
+  background: var(--glass-plain-bg) !important;
+}
+[data-glass-plain][data-glass-plain-border] {
+  border: var(--glass-plain-border) !important;
+}
+[data-glass-plain][data-glass-plain-shadow] {
+  box-shadow: var(--glass-plain-shadow) !important;
+}
+[data-glass-plain][data-glass-radius] {
+  border-radius: var(--glass-radius) !important;
+}
+[data-glass-plain][data-glass-text] {
+  color: var(--glass-text) !important;
+}
+[data-glass-plain][data-glass-font] {
+  font-family: var(--glass-font) !important;
+}
+[data-glass-plain][data-glass-weight] {
+  font-weight: var(--glass-weight) !important;
+}
+[data-glass-plain][data-glass-icon-color] svg {
+  color: var(--glass-icon-color) !important;
+}
+[data-glass-plain][data-glass-icon-size] svg {
+  width: var(--glass-icon-size) !important;
+  height: var(--glass-icon-size) !important;
+}
+
+/* ==========================================================================
+ * Switches and sliders (controls.js) — layout + the CSS look, always on.
+ * With WebGL / live glass running, each part's glass replaces its
+ * background (the rules above); without it (phones, no WebGL, reduced
+ * transparency) this IS the look. Colours come from the same config groups
+ * (controls.js writes them as --gp-track / --gp-fill / --gp-knob), and
+ * --gp-lift (0 solid … 1 glass) drives the knob's pressed look.
+ * :where() keeps these at zero specificity, so a site's own CSS (width,
+ * height, margins) always wins.
+ * ========================================================================== */
+:where([data-gp-switch]) {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  box-sizing: border-box;
+  width: 62px; /* iOS 26 proportions */
+  height: 28px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--gp-track, #cbd2e1);
+  color: inherit;
+  font: inherit;
+  vertical-align: middle;
+  cursor: pointer;
+  touch-action: pan-y; /* horizontal drags move the knob, vertical ones still scroll */
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+:where([data-gp-slider]) {
+  position: relative;
+  display: block;
+  box-sizing: border-box;
+  min-width: 80px;
+  height: 28px;
+  cursor: pointer;
+  touch-action: pan-y;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+:where([data-gp-switch], [data-gp-slider]):focus-visible {
+  outline: 2px solid var(--gp-focus, #0a84ff);
+  outline-offset: 3px;
+}
+:where([data-gp-switch]:disabled, [data-gp-switch][aria-disabled='true'], [data-gp-slider][aria-disabled='true']) {
+  opacity: 0.45;
+  cursor: default;
+}
+:where([data-gp-track]) {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(50% - 2.5px);
+  height: 5px;
+  border-radius: 999px;
+  background: var(--gp-track, rgba(120, 120, 128, 0.28));
+}
+:where([data-gp-fill]) {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 999px;
+  background: var(--gp-fill, #0a84ff);
+}
+/* The knob: solid at rest; pressed it turns clear with a bright rim. */
+:where([data-gp-knob]) {
+  position: absolute;
+  box-sizing: border-box;
+  border-radius: 999px;
+  background: var(--gp-knob, #ffffff);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, calc(0.6 * var(--gp-lift, 0))),
+    inset 0 1px 1px rgba(255, 255, 255, calc(0.7 * var(--gp-lift, 0))),
+    0 calc(1px + 2px * var(--gp-lift, 0)) calc(3px + 7px * var(--gp-lift, 0)) rgba(0, 0, 0, calc(0.22 + 0.08 * var(--gp-lift, 0)));
+  pointer-events: none;
+}
+
+/* ==========================================================================
+ * Checkboxes, radios, text fields, tab bars, sidebars, progress bars
+ * (widgets.js) — layout + the CSS look, always on (same idea as the switch
+ * and slider above). Colours come from the config groups as --gp-box /
+ * --gp-field / --gp-track / --gp-fill; --gp-accent colours lens-bar items.
+ * Squish & stretch (squish.js) moves elements with the CSS `translate` and
+ * `scale` properties, so none of these rules set those.
+ * ========================================================================== */
+
+/* Checkbox / radio: the root holds the glass box + the caller's label. */
+:where([data-gp-check], [data-gp-radio]) {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+:where([data-gp-check], [data-gp-radio]):focus-visible > [data-gp-box] {
+  outline: 2px solid var(--gp-focus, #0a84ff);
+  outline-offset: 2px;
+}
+:where([data-gp-check], [data-gp-radio]):is(:disabled, [aria-disabled='true']) {
+  opacity: 0.45;
+  cursor: default;
+}
+:where([data-gp-box]) {
+  position: relative;
+  flex: none;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  width: var(--gp-box-size, 22px);
+  height: var(--gp-box-size, 22px);
+  border-radius: 7px;
+  background: var(--gp-box, rgba(120, 120, 128, 0.2));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+  color: var(--gp-mark, #ffffff);
+}
+:where([data-gp-radio]) > :where([data-gp-box]) {
+  border-radius: 50%;
+}
+:where([data-gp-box]) > svg {
+  width: 82%;
+  height: 82%;
+  overflow: visible;
+  pointer-events: none;
+}
+:where([data-gp-dot]) {
+  position: absolute;
+  border-radius: 50%;
+  background: var(--gp-knob, #ffffff);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+}
+
+/* Text field: a capsule round the input; the input itself is see-through. */
+:where([data-gp-field]) {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: var(--gp-field, rgba(120, 120, 128, 0.16));
+  cursor: text;
+}
+:where([data-gp-field]) > :where(input, textarea) {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+/* Placeholder: the field's own text colour, slightly dimmed (the browser's
+   default grey was too faint against the glass). */
+:where([data-gp-field]) > :where(input, textarea)::placeholder {
+  color: currentColor;
+  opacity: 0.75;
+}
+:where([data-gp-field]) > svg {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  opacity: 0.9;
+}
+:where([data-gp-clear]) {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin: 0 -6px 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(120, 120, 128, 0.35);
+  color: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+:where([data-gp-clear]) > svg {
+  width: 13px;
+  height: 13px;
+}
+:where([data-gp-clear][hidden]) {
+  display: none;
+}
+
+/* Lens bar (tab bar / sidebar): the lens sits under the items. */
+:where([data-gp-lensbar]) {
+  position: relative;
+  box-sizing: border-box;
+  touch-action: pan-y;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+:where([data-gp-lensbar='vertical']) {
+  touch-action: pan-x;
+}
+:where([data-gp-lensbar='horizontal']) {
+  display: flex;
+  align-items: stretch;
+  padding: 4px;
+  border-radius: 999px;
+  background: rgba(120, 120, 128, 0.2);
+}
+:where([data-gp-lensbar='vertical']) {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+:where([data-gp-lens]) {
+  position: absolute;
+  z-index: 0;
+  box-sizing: border-box;
+  border-radius: 999px;
+  background: rgba(120, 120, 128, calc(0.22 - 0.14 * var(--gp-lift, 0)));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, calc(0.6 * var(--gp-lift, 0)));
+  pointer-events: none;
+}
+:where([data-gp-lensbar='vertical']) > :where([data-gp-lens]) {
+  border-radius: 10px;
+}
+:where([data-gp-lensbar]) > :where([data-gp-item]) {
+  position: relative;
+  z-index: 1;
+  margin: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+  color: var(--gp-item-color, currentColor);
+  -webkit-tap-highlight-color: transparent;
+}
+/* Two copies of an item's content, laid exactly over it (same box and
+   layout) and clipped by widgets.js: "base" (normal colour) outside the lens,
+   "accent" inside it — the colour wipes across the icon as the lens slides,
+   and every pixel is drawn once. The item's own content stays for layout and
+   screen readers, but is invisible. */
+/* (!important: a site's own `button { color: … }` must not show the
+   original text through — the showcase's did, doubling every label.) */
+:where([data-gp-lensbar]) > :where([data-gp-item][data-gp-wiped]) {
+  color: transparent !important;
+}
+:where([data-gp-lensbar]) > :where([data-gp-item][data-gp-wiped]) > :not([data-gp-wipe]) {
+  visibility: hidden;
+}
+:where([data-gp-wipe='base']) {
+  color: var(--gp-item-color, var(--gp-item-base, currentColor));
+}
+:where([data-gp-wipe]) {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  box-sizing: border-box;
+  display: inherit;
+  flex-direction: inherit;
+  flex-wrap: inherit;
+  align-items: inherit;
+  justify-content: inherit;
+  gap: inherit;
+  padding: inherit;
+  border-radius: inherit;
+  font: inherit;
+  text-align: inherit;
+  white-space: inherit;
+  pointer-events: none;
+}
+:where([data-gp-wipe='accent']) {
+  color: var(--gp-accent, #0a84ff);
+}
+/* Lifted lens: above the items, so live glass bends the icons too. */
+:where([data-gp-lens][data-gp-lifted]) {
+  z-index: 2;
+}
+:where([data-gp-lensbar='horizontal']) > :where([data-gp-item]) {
+  flex: 1;
+}
+
+/* Progress bar: track (root) → fill → bead. */
+:where([data-gp-progress]) {
+  position: relative;
+  display: block;
+  box-sizing: border-box;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--gp-track, rgba(120, 120, 128, 0.24));
+}
+:where([data-gp-progress]) > :where([data-gp-fill]) {
+  position: absolute;
+  border-radius: 999px;
+  background: var(--gp-fill, #0a84ff);
+}
+:where([data-gp-bead]) {
+  position: absolute;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.35);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.7), 0 2px 8px rgba(0, 0, 0, 0.2);
+  pointer-events: none;
+}
+
+/* <glass-ui> (element.js): a block, unless the site's CSS says otherwise. */
+:where(glass-ui) {
+  display: block;
+}
+:where(glass-ui[hidden]) {
+  display: none;
+}

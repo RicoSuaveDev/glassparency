@@ -1,0 +1,26 @@
+{
+  "$comment": "package.json of the PUBLIC SOURCE REPO (github.com/RicoSuaveDev/glassparency, folder library/). scripts/glass-release.sh writes it there as library/package.json (minus this comment) when it mirrors client/src/glass. It lets anyone build the npm package from the source: npm install && npm run build. Versions are the exact ones DashboardPro's client builds the library with (client/package.json) — keep them in step. NOT the published package's package.json (that is package.template.json).",
+  "name": "glassparency-source",
+  "private": true,
+  "description": "Source of the glassparency npm package (Liquid Glass for the web). npm install && npm run build → build/ (the package as published).",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node npm/build.mjs build",
+    "info": "node npm/build.mjs info"
+  },
+  "devDependencies": {
+    "@react-three/drei": "10.7.9",
+    "@react-three/fiber": "9.8.1",
+    "@vitejs/plugin-react": "6.1.1",
+    "@zumer/snapdom": "3.2.0",
+    "maath": "0.10.8",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "three": "0.186.1",
+    "vite": "8.3.1"
+  }
+}
