@@ -30,11 +30,14 @@ import {
 } from 'glassparency';
 import { GALLERY_GROUPS, Gallery } from './gallery';
 
-// Phones and tablets (touch): WebGL glass with the canvas anchored to the page.
-// Mobile browsers scroll on their own thread, so a window-fixed canvas would
-// draw its glass a frame behind the content; anchor "page" keeps it glued.
-// Testing: ?anchor=page forces it on a desktop; ?anchor=viewport turns glass on
-// at phone width with the old window-fixed canvas (to compare).
+// Every device: the glass canvases are anchored to the page. Browsers scroll on
+// their own thread (phones, and desktop trackpads / wheels too), so a
+// window-fixed canvas draws its WebGL glass a frame behind the content — the
+// hero lens and the drop / "Aa" tiles jumped up and down while scrolling.
+// Anchor "page" scrolls the canvas WITH the content, so the glass stays glued.
+// Phones and tablets (touch) also get WebGL glass at phone width (mobileQuery null).
+// Testing: ?anchor=page also turns glass on at phone width on a desktop;
+// ?anchor=viewport goes back to the old window-fixed canvas (to compare).
 const FORCED = typeof window !== 'undefined' ? new URLSearchParams(location.search).get('anchor') : null;
 const TOUCH = typeof window !== 'undefined' && (window.matchMedia?.('(pointer: coarse)').matches || FORCED === 'page');
 
@@ -47,7 +50,8 @@ function makeConfig({ frost, fringe, rim, thickness }) {
       root: '#root',
       background: 'auto',
       snapshot: { scale: 2 }, // (crisp page pictures on Retina screens)
-      ...(TOUCH && FORCED !== 'viewport' ? { mobileQuery: null, anchor: 'page' } : {}),
+      anchor: 'page', // (all devices — see the note above makeConfig)
+      ...(TOUCH && FORCED !== 'viewport' ? { mobileQuery: null } : {}),
       ...(FORCED === 'viewport' ? { mobileQuery: null, anchor: 'viewport' } : {}),
     },
     defaults: { saturation: 1.5, brightness: 1.03, innerGlow: 0.1, borderOpacity: 0.3, shadowOpacity: 0.1, shadowBlur: 24, shadowY: 10 },

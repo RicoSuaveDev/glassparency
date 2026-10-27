@@ -45,8 +45,13 @@
   position: absolute; left: 20px; top: 18px; z-index: 1; padding: 7px 12px; border-radius: 999px;
   background: rgba(255, 255, 255, 0.88); color: #111; font-size: 13px; font-weight: 600; line-height: 1;
 }
+/* No z-index here (nor on .gx-toy): a z-index would make a stacking context
+   and trap the elements' "lift" (z-index 60) inside it, under the float glass
+   canvas (z-index 49) — the canvas then paints the glass OVER the text and
+   icons (all WebGL glass: phones everywhere, the toy buttons on desktop).
+   Without one, the stage still paints above the word (later in the page). */
 .gx-stage {
-  position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 22px;
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: 22px;
   max-width: calc(100% - 32px);
 }
 
@@ -99,6 +104,12 @@
 /* glassMorph: the button and its menu share the top-left corner. */
 .gx-morph-area { position: relative; width: min(420px, calc(var(--gx-w) - 64px)); height: 280px; }
 .gx-morph-btn { position: absolute; left: 0; top: 0; border: 0; border-radius: 999px; background: rgba(255, 255, 255, 0.7); font: 600 16px/1 inherit; color: #111; padding: 14px 24px; cursor: pointer; }
+/* While its menu is open the button is under it, and glassMorph shows `from`
+   again after the film. WebGL glass (Safari, phones) is drawn under ALL the
+   lifted HTML, so the menu's glass can't cover "Options": hide the button
+   until the menu closes (tap outside / an item; the close film then lands
+   back on it). */
+.gx-morph-btn[aria-expanded="true"] { visibility: hidden; }
 .gx-morph-panel { position: absolute; left: 0; top: 0; display: flex; flex-direction: column; width: min(300px, 100%); padding: 18px; border-radius: 22px; background: rgba(253, 253, 255, 0.85); }
 .gx-morph-panel button {
   padding: 11px 12px; border: 0; border-radius: 12px; background: none; color: #111; cursor: pointer;
@@ -112,7 +123,7 @@
 
 /* The glass lab's morph menus (DashboardPro glassUiLab/toys.css). */
 .gx-stage:has(.gx-toy) { position: static; } /* (the toy is laid out in the whole tile) */
-.gx-toy { position: absolute; inset: 0; z-index: 2; }
+.gx-toy { position: absolute; inset: 0; } /* (no z-index: see .gx-stage) */
 .gx-toy-buttons { position: absolute; top: 64px; left: 20px; display: flex; gap: 14px; }
 .gx-toy-btn {
   position: relative; width: 52px; height: 52px; display: grid; place-items: center; padding: 0; border: 0;
