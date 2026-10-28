@@ -58,6 +58,10 @@ import { snapshot, startSnapshots } from './snapshot';
 import { createTextSampler } from './autoText';
 import { bufferScaleFactor, dprCap, getQualityIndex, noteFrame, samplesCap, subscribeGlassQuality } from './quality';
 import { acquireGeometry, outline } from './shapes';
+import { MAX_RIPPLES, activeRipples } from './ripple';
+
+/** Scratch vector: a ripple's centre, projected to buffer uv each frame. */
+const rippleAt = new THREE.Vector3();
 
 const MAX_LIQUID = 16; // shapes per morph group
 const UNIT_PLANE = new THREE.PlaneGeometry(1, 1); // shared by every shadow layer
@@ -655,6 +659,19 @@ function GlassMesh({ entry, controllers, sharedTexture }) {
       mu.glassBright.value = p.brightness;
       mu.glassMinify.value = 1 / (1 - p.minify);
       mu.glassCenter.value.set(g.position.x, g.position.y, 0);
+      // Ripples (ripple.js): each ring's centre in buffer uv (projected like
+      // glassCenter), radius + strength in px. Keeps drawing while any lives.
+      const rings = p.ripple > 0 ? activeRipples(entry) : [];
+      mu.glassRippleWave.value = p.rippleWavelength;
+      mu.glassRippleAmp.value = Math.max(0.5, p.ripple);
+      mu.glassPxUv.value.set(1 / Math.max(1, _state.size.width), 1 / Math.max(1, _state.size.height));
+      mu.glassRipples.value.forEach((v, i) => {
+        const ring = rings[i];
+        if (!ring || ring.amp <= 0.01) return v.set(0, 0, 0, 0);
+        rippleAt.set(r.left + ring.x, -(r.top + ring.y), 0).project(_state.camera);
+        return v.set(rippleAt.x * 0.5 + 0.5, rippleAt.y * 0.5 + 0.5, ring.radius, ring.amp);
+      });
+      if (rings.length) c.animating = true;
     }
 
     // Tint.
@@ -757,6 +774,12 @@ function patchMaterial(material, samples) {
   material.uniforms.glassBright = { value: 1 };
   material.uniforms.glassCenter = { value: new THREE.Vector3() }; // the slab's centre (world)
   material.uniforms.glassMinify = { value: 1 }; // > 1: sample further out = things look smaller (minify)
+  // Ripples (ripple.js): up to MAX_RIPPLES rings — xy = centre (buffer uv),
+  // z = radius (px), w = strength (px, 0 = unused); px → uv via glassPxUv.
+  material.uniforms.glassRipples = { value: Array.from({ length: MAX_RIPPLES }, () => new THREE.Vector4(0, 0, 0, 0)) };
+  material.uniforms.glassRippleWave = { value: 14 };
+  material.uniforms.glassRippleAmp = { value: 1 }; // the group's full ring strength (crest light scales with it)
+  material.uniforms.glassPxUv = { value: new THREE.Vector2(0.001, 0.001) };
   const original = material.onBeforeCompile;
   material.onBeforeCompile = (shader, renderer) => {
     original(shader, renderer); // drei's own changes (adds our uniforms too)
@@ -764,7 +787,8 @@ function patchMaterial(material, samples) {
     shader.fragmentShader = before
       .replace(
         'uniform sampler2D buffer;',
-        'uniform sampler2D buffer;\nuniform float blurLod;\nuniform float glassSat;\nuniform float glassBright;\nuniform vec3 glassCenter;\nuniform float glassMinify;'
+        'uniform sampler2D buffer;\nuniform float blurLod;\nuniform float glassSat;\nuniform float glassBright;\nuniform vec3 glassCenter;\nuniform float glassMinify;' +
+          `\nuniform vec4 glassRipples[${MAX_RIPPLES}];\nuniform float glassRippleWave;\nuniform float glassRippleAmp;\nuniform vec2 glassPxUv;`
       )
       .replace(
         'return texture2D(buffer, fragCoord.xy);',
@@ -778,7 +802,23 @@ function patchMaterial(material, samples) {
             vec2 c_ = cp_.xy / cp_.w * 0.5 + 0.5;
             uv_ = c_ + (uv_ - c_) * glassMinify;
           }
+          // ripples: push the read point along each ring (a sine wave in a
+          // soft envelope at the ring's radius) — the same profile as live.js.
+          float crest_ = 0.0; // crest light (like live.js): visible even over a plain background
+          for (int i_ = 0; i_ < ${MAX_RIPPLES}; i_++) {
+            vec4 rp_ = glassRipples[i_];
+            if (rp_.w <= 0.0) continue;
+            vec2 dp_ = (uv_ - rp_.xy) / glassPxUv; // px from the centre
+            float d_ = length(dp_);
+            if (d_ < 0.001) continue;
+            float x_ = d_ - rp_.z;
+            float env_ = exp(-(x_ * x_) / (0.81 * glassRippleWave * glassRippleWave));
+            float wave_ = env_ * sin(6.2831853 * x_ / glassRippleWave);
+            uv_ += (dp_ / d_) * (wave_ * rp_.w) * glassPxUv;
+            crest_ = max(crest_, max(wave_, 0.0) * min(1.0, rp_.w / glassRippleAmp) * 0.55);
+          }
           vec4 s_ = textureLod(buffer, uv_, blurLod);
+          s_.rgb = mix(s_.rgb, vec3(1.0), crest_);
           s_.rgb = mix(vec3(dot(s_.rgb, vec3(0.2126, 0.7152, 0.0722))), s_.rgb, glassSat) * glassBright;
           return s_;
         }`
@@ -1437,6 +1477,11 @@ function placePageCanvas(canvas, host, camera) {
 
 /** Is the element (or an ancestor) position: fixed / sticky? */
 function isPinned(el) {
+  // glassMorph's film shapes (motion.js) are position:fixed but NOT pinned:
+  // they live for one film, are re-placed from fresh window rects every frame,
+  // and ARE the morph — treated as pinned, a page-anchored canvas skipped them
+  // and every glassMorph popped open with no film (anchor "page", 1.3.1).
+  if (el.hasAttribute('data-glass-morph-shape')) return false;
   for (let n = el; n && n !== document.body && n !== document.documentElement; n = n.parentElement) {
     const pos = getComputedStyle(n).position;
     if (pos === 'fixed' || pos === 'sticky') return true;

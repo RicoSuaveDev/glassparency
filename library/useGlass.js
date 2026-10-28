@@ -30,6 +30,7 @@ import { explicitKeys, resolveGlass, subscribeConfig } from './config';
 import { getEntry, register, requestRender, subscribeStatus, unregister, update } from './registry';
 import { scheduleLiveSync } from './live';
 import { createSquish } from './squish';
+import { createRipples } from './ripple';
 import { autoTextEls, autoTextOf, dropAutoText, estimateAutoText } from './autoText';
 
 export function useGlass(ref, group, props) {
@@ -180,7 +181,25 @@ export function attachGlass(el, group, props = {}) {
       fill: 'forwards',
     });
   };
-  const enter = () => set({ hover: true });
+  // Ripples (ripple.js): made on first hover of an element whose config has
+  // "ripple" > 0. Mouse / pen only — a finger has no hover.
+  let ripples = null;
+  const rippleAt = (ev, first) => {
+    if (ev.pointerType === 'touch') return;
+    const cfg = resolveGlass(group, current);
+    if (!(cfg.ripple > 0)) return;
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    ripples ||= createRipples(id, () => resolveGlass(group, current));
+    const x = ev.clientX - r.left;
+    const y = ev.clientY - r.top;
+    if (first) ripples.enter(x, y);
+    else ripples.move(x, y);
+  };
+  const enter = (ev) => {
+    set({ hover: true });
+    rippleAt(ev, true);
+  };
   const leave = () => {
     if (entryState.pressed) press(false);
     set({ hover: false, pressed: false });
@@ -210,6 +229,7 @@ export function attachGlass(el, group, props = {}) {
     set({ pressed: true });
   };
   const move = (ev) => {
+    if (entryState.hover) rippleAt(ev, false);
     if (!entryState.pressed) return;
     track(ev);
     if (squishing) squish.drag(ev.clientX, ev.clientY);
@@ -297,6 +317,7 @@ export function attachGlass(el, group, props = {}) {
       el.removeEventListener('click', swallowClick, true);
       pressAnim?.cancel();
       squish?.destroy();
+      ripples?.destroy();
       for (const v of ['--glass-px', '--glass-py', '--glass-glow']) el.style.removeProperty(v);
       for (const k of ['glassActive', 'glassGroup', 'glassBorder', 'glassShadow']) setFlag(el, k, null);
       dropAutoText(el);

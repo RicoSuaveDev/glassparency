@@ -19,7 +19,8 @@
  *   thickness + ior → how far the rim bends · bevel + profile → rim width and
  *   curve · chromaticAberration · blur · saturation · brightness ·
  *   tint/tintOpacity · shape/radius · rimLight/rimWidth/lightAngle/innerGlow
- *   (as inset highlights) · pressGlow · hover/pressed/disabled tints.
+ *   (as inset highlights) · pressGlow · hover/pressed/disabled tints ·
+ *   ripple* (water rings on hover — ripple.js; extra filter stages below).
  *   (scale, anisotropy, roughness, distortion, samples, reflection and morph
  *   only apply to WebGL glass — morph groups always use WebGL.)
  *
@@ -50,6 +51,7 @@ import { getGlobal, resolveGlass, subscribeConfig } from './config';
 import { isExactBackground, isImageBackdrop, subscribeImageBackdrop } from './pageBackground';
 import { allEntries, getEntry, placement, requestRender, subscribeProps, subscribeStructure } from './registry';
 import { AUTO_FALLBACK_RADIUS, rimTilt } from './rim'; // (not shapes.js: that imports three.js)
+import { MAX_RIPPLES, activeRipples, subscribeRipples } from './ripple';
 
 /** Can this browser bend the live backdrop with an SVG filter? (Chromium only) */
 export const LIVE_SUPPORTED = (() => {
@@ -78,7 +80,8 @@ export function startLive() {
     // every frame): re-sync just that one.
     subscribeProps((id) => scheduleLiveSync(id)),
     subscribeConfig(syncAll),
-    subscribeImageBackdrop(syncAll) // the base canvas now paints the picture (or stopped)
+    subscribeImageBackdrop(syncAll), // the base canvas now paints the picture (or stopped)
+    subscribeRipples(drawRipples) // rings spreading through a live element: redraw just its filter
   );
   window.addEventListener('resize', syncAll, { passive: true });
   scheduleLiveSync();
@@ -254,7 +257,9 @@ function apply(e, mode) {
   const strength = p.thickness * (p.ior - 1) * 8; // px the rim can bend the backdrop
   const ca = p.chromaticAberration * 3;
   const id = `dp-live-${e.id}`;
-  const key = `${w}|${h}|${radius}|${rim}|${strength.toFixed(1)}|${ca.toFixed(3)}|${p.profile}|${p.minify.toFixed(3)}`;
+  // Ripples (ripple.js): only groups with ripple > 0 get the extra stages.
+  const ripple = p.ripple > 0 ? { amp: p.ripple, wave: p.rippleWavelength } : null;
+  const key = `${w}|${h}|${radius}|${rim}|${strength.toFixed(1)}|${ca.toFixed(3)}|${p.profile}|${p.minify.toFixed(3)}|${ripple ? `${ripple.amp}/${ripple.wave}` : '-'}`;
   let f = filters.get(e.id);
   if (!f || f.key !== key) {
     if (!f) {
@@ -264,8 +269,9 @@ function apply(e, mode) {
       f = { el: node, key: '' };
       filters.set(e.id, f);
     }
-    buildFilter(f.el, { w, h, radius, rim, strength, ca, profile: p.profile, minify: p.minify });
+    f.ripple = buildFilter(f.el, { w, h, radius, rim, strength, ca, profile: p.profile, minify: p.minify, ripple });
     f.key = key;
+    if (f.ripple) drawRipples(e.id); // rings already spreading (the element resized mid-ripple)
   }
   // Frost: CSS blur radius ≈ a third of the WebGL "blur" (they then look alike).
   const blur = p.blur > 0 ? `blur(${(p.blur / 3).toFixed(1)}px) ` : '';
@@ -315,11 +321,17 @@ function shapeRadius(p, w, h, el) {
 /**
  * The filter: displacement map (generated) → bend R, G, B by slightly
  * different amounts (chromatic aberration) → recombine.
+ *
+ * With `ripple` ({ amp, wave }) the map gets MAX_RIPPLES ring stages added
+ * before it bends anything (see rippleStages) — then this returns the nodes
+ * drawRipples() animates; otherwise null.
  */
-function buildFilter(node, { w, h, radius, rim, strength, ca, profile, minify }) {
+function buildFilter(node, { w, h, radius, rim, strength, ca, profile, minify, ripple }) {
   // (strength is now baked into the map; `scale` turns it back into px)
   const { url: map, scale: strength2 } = displacementMap(w, h, radius, rim, profile, strength, minify);
-  strength = strength2;
+  // Ripples need room in the same map: the bend scale grows by 2 × the ring
+  // strength, and the rim map is scaled down to match (same px as before).
+  strength = ripple ? strength2 + 2 * ripple.amp : strength2;
   node.setAttribute('x', '0');
   node.setAttribute('y', '0');
   node.setAttribute('width', String(w));
@@ -335,7 +347,9 @@ function buildFilter(node, { w, h, radius, rim, strength, ca, profile, minify })
     return `<feColorMatrix in="${input}" type="matrix" values="${m.join('  ')}" result="${result}"/>`;
   };
   node.innerHTML =
-    `<feImage href="${map}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="none" result="map"/>` +
+    (ripple
+      ? `<feImage href="${map}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="none" result="rim"/>` + rippleStages(w, h, strength2, strength)
+      : `<feImage href="${map}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="none" result="map"/>`) +
     (ca > 0.001
       ? disp(strength * (1 + 2 * ca), 'dr') +
         only('dr', 0, 'r') +
@@ -343,8 +357,147 @@ function buildFilter(node, { w, h, radius, rim, strength, ca, profile, minify })
         only('dg', 1, 'g') +
         disp(strength, 'db') +
         only('db', 2, 'b') +
-        '<feBlend in="r" in2="g" mode="screen" result="rg"/><feBlend in="rg" in2="b" mode="screen"/>'
-      : disp(strength, 'out'));
+        '<feBlend in="r" in2="g" mode="screen" result="rg"/><feBlend in="rg" in2="b" mode="screen" result="out"/>'
+      : disp(strength, 'out')) +
+    // Ripples: a soft light on each ring's crest, over the bent backdrop —
+    // that's what makes water rings visible even over a plain background.
+    (ripple ? `<feMerge><feMergeNode in="out"/>${Array.from({ length: MAX_RIPPLES }, (_, i) => `<feMergeNode in="hl${i}"/>`).join('')}</feMerge>` : '');
+  if (!ripple) return null;
+  const q = (sel) => [...node.querySelectorAll(sel)];
+  return {
+    w,
+    h,
+    scale: strength, // px per map unit (feDisplacementMap scale)
+    maxDist: Math.hypot(w, h),
+    wave: ripple.wave,
+    amp: ripple.amp, // the group's full ring strength (px) — crest light scales with amp / this
+    slots: q('[data-ripple-img]').map((img, i) => ({ img, func: q('[data-ripple-func]')[i], add: q('[data-ripple-add]')[i], hl: q('[data-ripple-hl]')[i], at: '' })),
+  };
+}
+
+// =============================================================================
+// Ripples (ripple.js) in the live filter
+// =============================================================================
+// The displacement map is built in stages:
+//   rim   the usual rim-bend map (generated image)
+//   map0  rim scaled to the new, bigger bend scale (feColorMatrix — keeps
+//         alpha at 1, so the composites below work on plain colours)
+//   per ring slot i (MAX_RIPPLES of them):
+//     rad_i   ONE radial picture (made once per size, 2w × 2h): R/G = the
+//             direction away from its centre, B = the distance. It's placed
+//             with its centre on the ring's centre (feImage x / y — moving
+//             it re-decodes nothing).
+//     prof_i  feComponentTransfer: a table over the DISTANCE (B) that draws
+//             the ring's profile (a sine wave in a soft envelope at the
+//             ring's radius) — rewritten every frame;
+//     rip_i   direction × profile (feComposite arithmetic) = how far and
+//             which way each pixel is pushed by that ring;
+//     acc_i   added to the map at the ring's strength (k3, per frame;
+//             0 = this slot is idle).
+//   map   the last sum → bends R, G, B as usual.
+//   hl_i  crest light: the ring profile as a soft white ring (its alpha set
+//         per frame by the ring's strength), merged OVER the bent backdrop —
+//         on a plain background a bend alone would show nothing.
+// Per frame only a few attributes change (tableValues, k3/k4, x/y, hl values).
+
+const RING_SAMPLES = 96; // table entries across the distance range
+const CREST_LIGHT = 0.55; // brightest crest highlight (alpha) of a fresh full-strength ring
+/** Crest-light matrix: white, alpha = 2k·profile − k (only the crest's top half lights up). */
+const hlMatrix = (k) => `0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  ${(2 * k).toFixed(4)} 0 0 0 ${(-k).toFixed(4)}`;
+const HL_OFF = hlMatrix(0);
+const radialMaps = new Map(); // "w×h" → data URL (one per size)
+const MAX_RADIAL_PIXELS = 400_000; // big panels get a smaller (stretched) picture
+
+function radialMap(w, h) {
+  const key = `${w}x${h}`;
+  if (radialMaps.has(key)) return radialMaps.get(key);
+  const k = Math.min(1, Math.sqrt(MAX_RADIAL_PIXELS / (4 * w * h)));
+  const W = Math.max(2, Math.round(2 * w * k));
+  const H = Math.max(2, Math.round(2 * h * k));
+  const c = document.createElement('canvas');
+  c.width = W;
+  c.height = H;
+  const ctx = c.getContext('2d');
+  const img = ctx.createImageData(W, H);
+  const max = Math.hypot(W / 2, H / 2);
+  for (let y = 0, i = 0; y < H; y++) {
+    for (let x = 0; x < W; x++, i += 4) {
+      const dx = x + 0.5 - W / 2;
+      const dy = y + 0.5 - H / 2;
+      const d = Math.hypot(dx, dy) || 1;
+      img.data[i] = Math.round(127.5 + 127.5 * (dx / d));
+      img.data[i + 1] = Math.round(127.5 + 127.5 * (dy / d));
+      img.data[i + 2] = Math.round(255 * Math.min(1, d / max));
+      img.data[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const url = c.toDataURL();
+  radialMaps.set(key, url);
+  if (radialMaps.size > 40) radialMaps.delete(radialMaps.keys().next().value); // (old sizes)
+  return url;
+}
+
+/** The ring stages (see above), ending in result="map". */
+function rippleStages(w, h, rimScale, scale) {
+  const a = scale > 0 ? rimScale / scale : 0;
+  const c = (0.5 - 0.5 * a).toFixed(5);
+  let out = `<feColorMatrix in="rim" type="matrix" values="${a.toFixed(5)} 0 0 0 ${c}  0 ${a.toFixed(5)} 0 0 ${c}  0 0 1 0 0  0 0 0 0 1" result="map0"/>`;
+  const url = radialMap(w, h);
+  const flat = Array(RING_SAMPLES).fill('0.5').join(' ');
+  for (let i = 0; i < MAX_RIPPLES; i++) {
+    const last = i === MAX_RIPPLES - 1;
+    out +=
+      `<feImage data-ripple-img="${i}" href="${url}" x="${-w}" y="${-h}" width="${2 * w}" height="${2 * h}" preserveAspectRatio="none" result="rad${i}"/>` +
+      `<feComponentTransfer in="rad${i}" result="t${i}"><feFuncB data-ripple-func="${i}" type="table" tableValues="${flat}"/></feComponentTransfer>` +
+      `<feColorMatrix in="t${i}" type="matrix" values="0 0 1 0 0  0 0 1 0 0  0 0 1 0 0  0 0 0 0 1" result="prof${i}"/>` +
+      `<feComposite in="rad${i}" in2="prof${i}" operator="arithmetic" k1="2" k2="-1" k3="-1" k4="1" result="rip${i}"/>` +
+      // Crest light: white where the ring's profile is above its middle (alpha set per frame).
+      `<feColorMatrix data-ripple-hl="${i}" in="prof${i}" type="matrix" values="${HL_OFF}" result="hl${i}"/>` +
+      `<feComposite data-ripple-add="${i}" in="${i === 0 ? 'map0' : `acc${i - 1}`}" in2="rip${i}" operator="arithmetic" k1="0" k2="1" k3="0" k4="0" result="${last ? 'map' : `acc${i}`}"/>`;
+  }
+  return out;
+}
+
+/** Redraw one element's rings (called every frame while it has any). */
+function drawRipples(id) {
+  const f = filters.get(id);
+  const rp = f?.ripple;
+  if (!rp) return;
+  const rings = activeRipples(getEntry(id));
+  rp.slots.forEach((slot, i) => {
+    const ring = rings[i];
+    if (!ring || ring.amp <= 0.01) {
+      if (slot.at !== 'idle') {
+        slot.add.setAttribute('k3', '0');
+        slot.add.setAttribute('k4', '0');
+        slot.hl.setAttribute('values', HL_OFF);
+        slot.at = 'idle';
+      }
+      return;
+    }
+    // Centre the radial picture on the ring.
+    const at = `${ring.x.toFixed(1)},${ring.y.toFixed(1)}`;
+    if (slot.at !== at) {
+      slot.img.setAttribute('x', (ring.x - rp.w).toFixed(1));
+      slot.img.setAttribute('y', (ring.y - rp.h).toFixed(1));
+      slot.at = at;
+    }
+    // The ring's profile over distance: a sine wave in a soft envelope.
+    const vals = new Array(RING_SAMPLES);
+    for (let n = 0; n < RING_SAMPLES; n++) {
+      const d = (n / (RING_SAMPLES - 1)) * rp.maxDist;
+      const x = d - ring.radius;
+      const env = Math.exp(-((x / (0.9 * rp.wave)) ** 2));
+      vals[n] = (0.5 + 0.5 * env * Math.sin((2 * Math.PI * x) / rp.wave)).toFixed(3);
+    }
+    slot.func.setAttribute('tableValues', vals.join(' '));
+    // Strength: ±amp px at the crest (map units = px / scale, ×2 for the −0.5…0.5 range).
+    const k3 = rp.scale > 0 ? (2 * ring.amp) / rp.scale : 0;
+    slot.add.setAttribute('k3', k3.toFixed(5));
+    slot.add.setAttribute('k4', (-0.5 * k3).toFixed(5));
+    slot.hl.setAttribute('values', hlMatrix(CREST_LIGHT * Math.min(1, ring.amp / (rp.amp || 1))));
+  });
 }
 
 /**

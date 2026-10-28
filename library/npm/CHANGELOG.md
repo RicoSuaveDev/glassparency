@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.2 — 2026-10-28
+
+- Fix Glass Morphs anchoring to page preventing the morph animation from triggering. glassMorph’s own shapes are now still drawn on a page-anchored canvas. They only exist for one animation and get re-measured every frame, so this is safe. Nothing else changed, and the scroll-jitter fix stays in.
+
 ## 1.3.1 — 2026-10-26
 
 - glassMorph grows the button itself into the target, in the button's own

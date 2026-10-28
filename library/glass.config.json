@@ -89,7 +89,11 @@
     "squish": 0,
     "squishGrow": 1,
     "squishPull": 0,
-    "squishBounce": 0.5
+    "squishBounce": 0.5,
+    "ripple": 0,
+    "rippleWavelength": 14,
+    "rippleSpeed": 120,
+    "rippleDuration": 1100
   },
   "groups": {
     "sidebar": {

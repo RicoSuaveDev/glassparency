@@ -107,6 +107,13 @@ export const SCHEMA = {
   squishPull: { type: 'number', min: 0, max: 60, step: 1, label: 'Pull towards the pointer (px)', section: 'Squish' },
   squishBounce: { type: 'number', min: 0, max: 1, step: 0.01, label: 'Wobble on release', section: 'Squish' },
 
+  // Ripples (ripple.js): the pointer moving over the glass sends water rings
+  // through it — a ring where it comes in, more as it moves. ripple 0 = off.
+  ripple: { type: 'number', min: 0, max: 24, step: 0.5, label: 'Ripple strength (px, 0 = off)', section: 'Ripple' },
+  rippleWavelength: { type: 'number', min: 4, max: 60, step: 1, label: 'Ripple ring width (px)', section: 'Ripple' },
+  rippleSpeed: { type: 'number', min: 20, max: 600, step: 5, label: 'Ripple speed (px/s)', section: 'Ripple' },
+  rippleDuration: { type: 'number', min: 200, max: 4000, step: 50, label: 'Ripple fades over (ms)', section: 'Ripple' },
+
   // Liquid morph: glass elements with the same morph name (and layer) melt
   // into each other when they come within morphRadius px — like Apple's
   // morphing buttons. "" = off.

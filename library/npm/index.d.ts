@@ -65,6 +65,14 @@ export interface GlassProps {
   squishPull?: number;
   /** Wobble when let go: 0 = none, 1 = very jelly. */
   squishBounce?: number;
+  /** Water ripples when the pointer moves over the glass: crest strength in px (0–24, 0 = off). */
+  ripple?: number;
+  /** Ripple ring width, px (4–60). */
+  rippleWavelength?: number;
+  /** How fast a ring spreads, px/s (20–600). */
+  rippleSpeed?: number;
+  /** How long a ring takes to fade out, ms (200–4000). */
+  rippleDuration?: number;
   morph?: string;
   morphRadius?: number;
   tint?: GlassTint;
