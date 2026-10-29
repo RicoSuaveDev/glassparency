@@ -346,6 +346,15 @@ export function getGlobal() {
       minIntervalMs: clamp(num(s.minIntervalMs, 1200), 100, 60000),
       margin: clamp(num(s.margin, 480), 0, 4000),
       scale: clamp(num(s.scale, 1), 0.25, 2),
+      // Picture the WHOLE page (up to a GPU-safe height) instead of just the
+      // area round the floating glass: true / "mobile" (only in the
+      // global.mobileQuery layout) / false. Glass pinned over a scrolling
+      // page (a phone's header + tab bar) then only slides the picture and
+      // never runs out of it mid-scroll (snapshot.js).
+      fullPage: s.fullPage === true ? true : s.fullPage === 'mobile' ? 'mobile' : false,
+      // Picture resolution in the mobile layout (phones have 2–3× screens;
+      // crystal glass shows a soft picture). Default: the same as scale.
+      mobileScale: clamp(num(s.mobileScale, num(s.scale, 1)), 0.25, 3),
     },
   };
 }

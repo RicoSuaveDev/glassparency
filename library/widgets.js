@@ -76,6 +76,12 @@ function roundRectPath(x, y, w, h, r) {
   );
 }
 
+// Held tab-bar lens proportions (iOS 26 Music, measured from screenshots:
+// 1.33–1.49 wide : 1 tall): with few, wide items the lens used to take the
+// item's whole width and looked too wide. While it lifts, its length eases
+// down to at most this × its height; the stretch while moving still adds to it.
+const LENS_MAX_ASPECT = 1.45;
+
 /** A config group's squish tuning, for createSquish. */
 const squishCfg = (group, props) => () => {
   const c = resolveGlass(group, props);
@@ -638,9 +644,12 @@ export function createLensBar(root, opts = {}) {
     const bx = boxes();
     if (!bx.length) return;
     if (cur.p == null) cur.p = bx[index]?.c ?? bx[0].c;
-    const len = sizeAt(bx, cur.p);
     const crossStart = vertical ? 0 : inset;
     const crossSize = vertical ? bx[0].bs : (vertical ? root.clientWidth : root.clientHeight) - inset * 2;
+    // Item length — capped to LENS_MAX_ASPECT × height as the lens lifts
+    // (tab bars only; a sidebar's lens is a full-width row).
+    const itemLen = sizeAt(bx, cur.p);
+    const len = vertical ? itemLen : itemLen - Math.max(0, itemLen - crossSize * LENS_MAX_ASPECT) * cur.lift;
     // Lifted: bigger; moving: stretched along the bar, thinner across it.
     const s = 1 + (lensScale - 1) * cur.lift;
     const st = stretchFor(vertical ? 0 : cur.v, vertical ? cur.v : 0, Math.abs(cur.v) * 0.0009 * (0.4 + 0.6 * cur.lift));

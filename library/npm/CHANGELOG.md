@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.3 — 2026-10-29
+
+- Glassparency tab bar now looks closer to it's iOS inspiration.
+- Added Full page snapshots for mobile up to 8192px
+
+## Unreleased
+
+- Tab bar: the default look now matches the iOS 26 Music tab bar. The bar is solid-looking glass with no frost (dark mode #3a3a3c at 75%). The held lens is clear and shrinks what's behind it a little (minify 0.12, was a −0.1 magnify): the bar shows inside it slightly smaller, with the page above and below as dark bands curving into its rim, plus a faint colour fringe. While held, the lens is at most 1.45× as wide as it is tall (it used to take a wide tab's full width); the stretch while moving is unchanged.
+- New: global.snapshot.fullPage (true / "mobile") pictures the whole page (up to a GPU-safe height) for floating WebGL glass, so glass pinned over a scrolling page (a phone's header and tab bar) only slides the picture and never runs out of it mid-flick. New global.snapshot.mobileScale sets the picture's resolution in the mobile layout.
+
 ## 1.3.2 — 2026-10-28
 
 - Fix Glass Morphs anchoring to page preventing the morph animation from triggering. glassMorph’s own shapes are now still drawn on a page-anchored canvas. They only exist for one animation and get re-measured every frame, so this is safe. Nothing else changed, and the scroll-jitter fix stays in.

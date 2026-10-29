@@ -10,7 +10,17 @@
  * A picture takes 10–300 ms, so it is only retaken when the page actually
  * changes (MutationObserver), debounced, never while scrolling, and at most
  * every `minIntervalMs`. Between pictures the renderer slides the old one by
- * however far the page has scrolled, so scrolling still looks right. On
+ * however far the page has scrolled, so scrolling still looks right.
+ *
+ * FULL PAGE (global.snapshot.fullPage true / "mobile"): the picture covers
+ * the whole page (capped at MAX_PICTURE_PX tall, centred on the window), not
+ * just the glass ± margin. For glass PINNED over a scrolling page — a
+ * phone's header and tab bar — the area under it changes on every scroll,
+ * and a margin-sized picture ran out on the first flick: the glass showed
+ * stale blobs of buttons that had already scrolled past until scrolling
+ * stopped and a new picture came. With the whole page in the picture,
+ * scrolling only slides it. (In the mobile layout `mobileScale` sets the
+ * picture's resolution — phones have 2–3× screens.) On
  * Chromium builds with the experimental HTML-in-Canvas API, snapDOM uses it
  * automatically (faster, native).
  *
@@ -91,6 +101,44 @@ export function reserveSnapshotArea(key, rect) {
   scheduleSnapshot(0);
 }
 
+/**
+ * Tallest picture (device px) — a texture every phone GPU takes (iOS: 8192+)
+ * and well under Safari's canvas memory limit at phone widths.
+ */
+const MAX_PICTURE_PX = 8192;
+
+/** In the layout that has no page-wide WebGL (phones)? */
+function mobileLayout() {
+  const q = getGlobal().mobileQuery;
+  return Boolean(q && typeof matchMedia === 'function' && matchMedia(q).matches);
+}
+
+/** Picture the whole page this time? (global.snapshot.fullPage) */
+function fullPageOn() {
+  const f = getGlobal().snapshot.fullPage;
+  return f === true || (f === 'mobile' && mobileLayout());
+}
+
+/** Picture resolution (device px per CSS px). */
+const pictureScale = () => {
+  const g = getGlobal().snapshot;
+  return mobileLayout() ? g.mobileScale : g.scale;
+};
+
+/**
+ * Full-page area (window px): the whole page width, and the page's full
+ * height up to MAX_PICTURE_PX — centred on the window when it's taller.
+ */
+function fullPageRect() {
+  const doc = document.documentElement;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const docH = Math.max(doc.scrollHeight, doc.clientHeight);
+  const span = Math.min(docH, Math.floor(MAX_PICTURE_PX / pictureScale()));
+  const pageTop = Math.max(0, Math.min(window.scrollY + vh / 2 - span / 2, docH - span));
+  return { x: 0, y: pageTop - window.scrollY, w: vw, h: span };
+}
+
 /** Where the floating glass is (window px), grown by the margin — or null. */
 function captureRect() {
   const g = getGlobal().snapshot;
@@ -116,6 +164,7 @@ function captureRect() {
     y1 = Math.max(y1, r.bottom);
   }
   if (x0 === Infinity) return null;
+  if (fullPageOn()) return fullPageRect();
   // Margin: room for refraction and for sliding while the page scrolls.
   // Clamped to the document: a clip outside the page is cut off by the capture
   // and the picture would then be drawn shifted.
@@ -255,7 +304,7 @@ async function take() {
     const canvas = await snapdom.toCanvas(root, {
       // Page coordinates (window px + scroll).
       clip: { x: rect.x + sx, y: rect.y + sy, width: rect.w, height: rect.h },
-      dpr: g.scale,
+      dpr: pictureScale(),
       backgroundColor: null, // transparent: the WebGL background shows through
       // Floating glass + [data-glass-ignore] are made invisible in the copy
       // (hideLeftOut), NOT with snapDOM's exclude option — see hideLeftOut.
@@ -395,6 +444,20 @@ function onScroll() {
   // or if something inside a scroll box (not the window) moved.
   const moved = Math.abs(window.scrollY - snapshot.scrollY) + Math.abs(window.scrollX - snapshot.scrollX);
   const g = getGlobal().snapshot;
+  if (fullPageOn()) {
+    // Whole-page picture: only when the window (± margin) has slid past its
+    // ends — a page taller than the picture — or a scroll box moved.
+    const top = snapshot.y + snapshot.scrollY; // picture's page y
+    const bottom = top + snapshot.h;
+    // What should be in it: the window ± margin, within the page.
+    const doc = document.documentElement;
+    const docH = Math.max(doc.scrollHeight, doc.clientHeight);
+    const needTop = Math.max(0, window.scrollY - g.margin);
+    const needBottom = Math.min(docH, window.scrollY + window.innerHeight + g.margin);
+    const covered = snapshot.canvas && needTop >= top - 1 && needBottom <= bottom + 1;
+    if (!covered || moved === 0) scheduleSnapshot(250);
+    return;
+  }
   if (moved > g.margin / 2 || moved === 0) scheduleSnapshot(250);
 }
 function onResize() {

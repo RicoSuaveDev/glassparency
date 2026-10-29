@@ -1015,15 +1015,15 @@
       "chromaticAberration": 0
     },
     "tabBar": {
-      "$comment": "iOS-style tab bar (widgets.js createTabBar). squish*: the bar swells a little while pressed.",
+      "$comment": "iOS-style tab bar (widgets.js createTabBar), matched to the iOS 26 Music tab bar: solid-looking glass with NO frost (blur 0) that stands out from the page, so the held lens (tabLensActive) shows it shrunk inside with dark bands above / below. Dark mode: #3a3a3c at 0.75 = the reference #2b2b2b over black. squish*: the bar swells a little while pressed.",
       "style": "default",
       "shape": "capsule",
       "tint": "#ffffff",
-      "tintOpacity": 0.3,
-      "thickness": 10,
-      "bevel": 18,
-      "ior": 1.3,
-      "blur": 12,
+      "tintOpacity": 0.75,
+      "thickness": 32,
+      "bevel": 28,
+      "ior": 1.5,
+      "blur": 0,
       "saturation": 1.7,
       "chromaticAberration": 0,
       "rimLight": 0.55,
@@ -1047,7 +1047,7 @@
       "thickness": 3,
       "bevel": 12,
       "ior": 1.25,
-      "blur": 12,
+      "blur": 0,
       "chromaticAberration": 0,
       "rimLight": 0.25,
       "innerGlow": 0.08,
@@ -1055,7 +1055,7 @@
       "shadowOpacity": 0
     },
     "tabLensActive": {
-      "$comment": "Tab bar lens while pressed / dragged: clear glass, bigger than the bar, that magnifies (minify < 0) and bends what's under it — including the tab icons (live glass lifts it above them).",
+      "$comment": "Tab bar lens while pressed / dragged: clear glass, bigger than the bar, that SHRINKS what's behind it a little (minify 0.12 — measured from iOS 26 Music: the bar shows at ~89% of its height inside the lens, so the page just above / below it shows as dark bands that curve into the rim; it used to magnify, minify -0.1, which looked flat) and bends the tab icons under it (live glass lifts it above them; elsewhere widgets.js lens optics).",
       "style": "default",
       "shape": "capsule",
       "tint": "#ffffff",
@@ -1064,7 +1064,7 @@
       "bevel": 14,
       "ior": 1.35,
       "blur": 0,
-      "chromaticAberration": 0,
+      "chromaticAberration": 0.15,
       "saturation": 1.2,
       "brightness": 1.06,
       "rimLight": 0.95,
@@ -1074,7 +1074,7 @@
       "shadowOpacity": 0.18,
       "shadowBlur": 14,
       "shadowY": 4,
-      "minify": -0.1,
+      "minify": 0.12,
       "frosted": {
         "tintOpacity": 0.04,
         "blur": 0
@@ -1345,8 +1345,8 @@
           "textColor": "#ffffff"
         },
         "tabBar": {
-          "tint": "#1c1c1e",
-          "tintOpacity": 0.45,
+          "tint": "#3a3a3c",
+          "tintOpacity": 0.75,
           "borderOpacity": 0.18
         },
         "tabLens": {
@@ -1355,7 +1355,7 @@
         },
         "tabLensActive": {
           "tint": "#1c1c1e",
-          "tintOpacity": 0.1,
+          "tintOpacity": 0.04,
           "borderOpacity": 0.22,
           "frosted": {
             "tintOpacity": 0.1
