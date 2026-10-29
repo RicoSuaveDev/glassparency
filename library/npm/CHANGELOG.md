@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.4 — 2026-10-29
+
+- Minor bug fixes relating to the new tab bar and its configuration.
+
 ## 1.3.3 — 2026-10-29
 
 - Glassparency tab bar now looks closer to it's iOS inspiration.

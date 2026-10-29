@@ -5,7 +5,7 @@
 [![Live demo](https://img.shields.io/badge/demo-live-0a84ff)](https://ricosuavedev.github.io/glassparency/)
 [![Source on GitHub](https://img.shields.io/badge/source-GitHub-0a84ff?logo=github)](https://github.com/RicoSuaveDev/glassparency/tree/main/library)
 
-![A glass lens bending the headline “Glass that bends the page.”](https://cdn.jsdelivr.net/npm/glassparency@1.3.3/media/hero-light.webp)
+![A glass lens bending the headline “Glass that bends the page.”](https://cdn.jsdelivr.net/npm/glassparency@1.3.4/media/hero-light.webp)
 
 **[See it live →](https://ricosuavedev.github.io/glassparency/)** Drag the lens, flip the settings, melt the drops.
 
@@ -36,13 +36,13 @@ Under the hood:
 
 ## What it looks like
 
-![Glass controls over flat colour artwork: a media player, settings rows, liquid drops and a thick glass bar over large type](https://cdn.jsdelivr.net/npm/glassparency@1.3.3/media/grid-light.webp)
+![Glass controls over flat colour artwork: a media player, settings rows, liquid drops and a thick glass bar over large type](https://cdn.jsdelivr.net/npm/glassparency@1.3.4/media/grid-light.webp)
 
-| ![A glass media player floating over poster artwork](https://cdn.jsdelivr.net/npm/glassparency@1.3.3/media/player.webp) | ![Two glass drops melting into one over black and white stripes](https://cdn.jsdelivr.net/npm/glassparency@1.3.3/media/morph.webp) |
+| ![A glass media player floating over poster artwork](https://cdn.jsdelivr.net/npm/glassparency@1.3.4/media/player.webp) | ![Two glass drops melting into one over black and white stripes](https://cdn.jsdelivr.net/npm/glassparency@1.3.4/media/morph.webp) |
 |---|---|
 | Floating controls bend the artwork behind them | Liquid morph: shapes melt together and split apart |
 
-![The same page in dark mode](https://cdn.jsdelivr.net/npm/glassparency@1.3.3/media/grid-dark.webp)
+![The same page in dark mode](https://cdn.jsdelivr.net/npm/glassparency@1.3.4/media/grid-dark.webp)
 
 ### The controls in motion
 
