@@ -520,6 +520,9 @@ function drawRipples(id) {
  * every resize. Normal UI (headers, docks, menus) stays at full resolution.
  */
 const MAX_MAP_PIXELS = 1_000_000;
+// Map steps (of 255) the lens map's G middle is raised by — see displacementMap.
+// Measured in desktop Chrome: the lens picture sat 0.0625 × scale too low = 16 steps.
+const MINIFY_Y_NUDGE = 16;
 function displacementMap(fullW, fullH, fullRadius, fullRim, profile, strength, minify = 0) {
   const k = Math.min(1, Math.sqrt(MAX_MAP_PIXELS / (fullW * fullH)));
   const w = Math.max(1, Math.round(fullW * k));
@@ -592,16 +595,23 @@ function displacementMap(fullW, fullH, fullRadius, fullRim, profile, strength, m
   c.height = h;
   const ctx = c.getContext('2d');
   const img = ctx.createImageData(w, h);
-  const norm = maxAbs > 0 ? 127 / maxAbs : 0;
+  // Lens glass (minify ≠ 0, e.g. the pressed switch knob): Chrome on a real
+  // screen reads the map's G "middle" as slightly below 0.5, so the picture
+  // inside the lens sat ~6% of the bend scale too LOW (≈1.25 px on the knob:
+  // a thick band on top, a thin one below). Raising the G middle by
+  // MINIFY_Y_NUDGE map steps moves it back up. The range shrinks by the same
+  // steps so the biggest offsets still fit in 0–255.
+  const nudge = scaleIn !== 1 ? MINIFY_Y_NUDGE : 0;
+  const norm = maxAbs > 0 ? (127 - nudge) / maxAbs : 0;
   for (let p = 0, i = 0; p < w * h; p++, i += 4) {
     img.data[i] = 128 + offs[p * 2] * norm;
-    img.data[i + 1] = 128 + offs[p * 2 + 1] * norm;
+    img.data[i + 1] = 128 + nudge + offs[p * 2 + 1] * norm;
     img.data[i + 2] = 128;
     img.data[i + 3] = 255;
   }
   ctx.putImageData(img, 0, 0);
   // feDisplacementMap: offset = scale × (C − 0.5), C = byte / 255.
-  return { url: c.toDataURL(), scale: maxAbs > 0 ? (maxAbs * 2 * 255) / 254 : 0 };
+  return { url: c.toDataURL(), scale: maxAbs > 0 ? (maxAbs * 255) / (127 - nudge) : 0 };
 }
 
 /** Rim light + inner glow as inset box-shadows (light from lightAngle). */

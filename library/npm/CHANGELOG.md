@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.5 — 2026-10-30
+
+- Fixed Switch knob gap offset with a nudge to the refraction itself.
+- Switch now looks closer to its inspiration.
+
 ## 1.3.4 — 2026-10-29
 
 - Minor bug fixes relating to the new tab bar and its configuration.

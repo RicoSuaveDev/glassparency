@@ -181,8 +181,22 @@ function captureRect() {
   return { x, y, w, h };
 }
 
-/** Left out of the picture: floating glass (it's what looks AT the picture), the glass canvases and [data-glass-ignore]. */
-const leftOut = (el) => el.matches('[data-glass-ignore], [data-glass-host]') || isFloatingGlass(el);
+/**
+ * Floating glass that a glass canvas really draws (so it looks AT the picture
+ * and must not be IN it). In the phone layout only global.mobileLayers get a
+ * canvas; glass on any other floating layer (switches, checkboxes, text
+ * fields — layer "float") is plain CSS there, i.e. ordinary page content.
+ * It used to be hidden anyway, so the tech tab bar (layer "top") refracted
+ * the page with every switch / field missing.
+ */
+function drawnFloatingGlass(el) {
+  if (!isFloatingGlass(el)) return false;
+  if (!mobileLayout()) return true;
+  return getGlobal().mobileLayers.includes(placement(Number(el.dataset.glassId)).layer);
+}
+
+/** Left out of the picture: floating glass that's drawn as glass (it's what looks AT the picture), the glass canvases and [data-glass-ignore]. */
+const leftOut = (el) => el.matches('[data-glass-ignore], [data-glass-host]') || drawnFloatingGlass(el);
 let warnedNodeMap = false;
 
 /**
@@ -412,7 +426,7 @@ function insideFloatingGlass(n) {
   for (let el = n?.nodeType === 1 ? n : n?.parentElement; el; el = el.parentElement?.closest('[data-glass-id]')) {
     el = el.closest('[data-glass-id]');
     if (!el) return false;
-    if (isFloatingGlass(el)) return true;
+    if (drawnFloatingGlass(el)) return true; // (CSS-only glass on a phone is page content: its changes count)
   }
   return false;
 }
