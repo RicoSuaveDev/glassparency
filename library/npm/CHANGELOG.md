@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.3.6 — 2026-11-04
+
+- Every GlassTabBar now looks like the iOS 26 tab bar by default: real WebGL glass on layer "top" in every browser, phones included, with the clear lens that shrinks the bar inside it and bends the page into its rim.
+- Tab bars no longer need any setup for real glass: GlassProvider hosts the "top" layer itself (fixed to the window, new global.zIndex.top, default 48); your own <GlassLayerHost layer="top"> still takes over.
+- New defaults: global.mobileLayers ["top"] (only tab bars get WebGL on phones), global.snapshot.fullPage "mobile" and mobileScale 2 (a pinned tab bar never runs out of picture while scrolling).
+- Tab bar items default to iOS proportions: 62px bar, icon over an 11px bold label. The bar sits at z-index 50, so a wrapper with its own stacking context needs a z-index above 48.
+- The held lens now resizes as you drag: it eases to fit the content (icon + label) of the tab it's over, from a circle up to about 1.45× its height (more only for wider labels).
+- Faster: WebGL glass whose size animates (the stretching tab lens, squishing knobs) no longer builds a new 3D mesh every frame. Small size changes stretch the current mesh, and the exact one is built once the size holds still. Dragging the tab bar stays at full frame rate.
+- New: CSS Liquid Glass fallback (global.cssGlass, on by default). Wherever WebGL or live glass isn't drawing an element (Safari and Firefox without WebGL, phones, the moment before WebGL starts), the library now draws its own CSS glass from the element's config group: a frosted pane in its tint, a lit edge (top-right / bottom-left), a shaded unlit edge, a specular line, a fold along the rim and a soft shadow. Works in every engine (no SVG filters). Budgets: true = 2 backdrop layers per element, "full" = the complete set (4 + caustic), "lite" = 1, false = your own CSS only (the old behaviour). The edge lighting follows nordify/css-liquid-glass (MIT).
+- CSS glass follows the group's style: default (tinted frost, thin lit rim), crystal (clear, a thick bright rim and fold, a caustic glow; edges stay bright without over-saturating the page) and frosted (milky veil, soft wide edge). Edge widths follow the group's thickness.
+- CSS glass uses the group's shape only where the site sets no corner radius of its own (a site's mobile stylesheet keeps its rounded rectangle).
+- Tab bars and sidebars no longer start dragging the link or icon under the pointer when you press and slide (dragstart is cancelled, -webkit-user-drag: none for Safari).
+- The topbar preset lost its old "bleed": WebGL browsers (Safari, Firefox) drew it as a full-width rectangle while Chromium's live glass drew a floating capsule. Both draw the capsule now.
+- Held lens colour fringe toned down (tabLensActive chromaticAberration 0.15 → 0.04).
+- Fixed: WebGL glass drawn in the mobile layout (global.mobileLayers) now hides the element's CSS background and the tab bar's CSS shadows, with no extra CSS needed.
+
 ## 1.3.5 — 2026-10-30
 
 - Fixed Switch knob gap offset with a nudge to the refraction itself.

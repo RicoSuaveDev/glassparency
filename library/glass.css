@@ -29,6 +29,15 @@ html[data-glass='on'] [data-glass-active]:is([data-glass-drawn], [data-glass-liv
   backdrop-filter: none !important;
 }
 
+/* Mobile layout: <html data-glass> stays off there (the page is CSS glass),
+   but layers in global.mobileLayers (default "top": tab bars) still draw
+   WebGL glass — hand those elements over the same way once drawn. */
+html:not([data-glass='on']) [data-glass-drawn] {
+  background: transparent !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
 /* Live glass (live.js, Chromium): the glass is the element's ::before layer,
    inset by the config's padding, with its own corner radius, tint, border,
    drop shadow and rim light — so all of them follow the glass shape. In
@@ -346,23 +355,170 @@ html[data-glass='on'] [data-glass-active][data-glass-icon-size] svg {
   display: none;
 }
 
+/* =============================================================================
+ * CSS glass (cssGlass.js) — the library's own Liquid Glass look wherever an
+ * element's glass is NOT drawn by WebGL (data-glass-drawn) or live SVG glass
+ * (data-glass-live): Safari / Firefox without WebGL, the CSS-only mobile
+ * layout, the moment before WebGL starts. Layers in one <span data-gp-css>
+ * (the element's first child, z-index -1 inside the isolated element).
+ * Edge lighting after nordify/css-liquid-glass (MIT, (c) 2026 Nordify).
+ * ========================================================================== */
+:root [data-gp-css-on]:not([data-glass-drawn], [data-glass-live]) {
+  isolation: isolate;
+  background: transparent !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+/* The layers need a positioned element: only ones that were static (flagged
+   by cssGlass.js) are made relative — never a fixed / absolute knob or lens. */
+:where([data-gp-css-static]:not([data-glass-drawn], [data-glass-live])) {
+  position: relative;
+}
+/* The group's shape only where the site gives the element no corner radius
+   of its own (zero specificity: a site's mobile stylesheet keeps a rounded
+   rectangle where the glass would be a capsule). */
+:where([data-gp-css-on][data-glass-radius]:not([data-glass-drawn], [data-glass-live])) {
+  border-radius: var(--glass-radius);
+}
+:root [data-gp-css-on][data-glass-shadow='off']:not([data-glass-drawn], [data-glass-live]) {
+  box-shadow: none !important;
+}
+:root [data-gp-css-on][data-glass-border='off']:not([data-glass-drawn], [data-glass-live]) {
+  border-color: transparent !important;
+}
+/* Drawn by WebGL / live glass: the CSS layers step aside. */
+[data-glass-drawn] > [data-gp-css],
+[data-glass-live] > [data-gp-css] {
+  display: none !important;
+}
+/* Shadow: a soft box-shadow under the glass (only outside it — the layer
+   itself is transparent). Cheap: no filter. */
+[data-gp-css-layer='shadow'] {
+  box-shadow: 0 calc(10px * var(--gp-css-s, 1)) calc(22px * var(--gp-css-s, 1)) calc(-3px * var(--gp-css-s, 1))
+    rgb(10 30 60 / var(--gp-css-shadow-o, 0.3));
+}
+/* "full" budget: a blurred OUTLINE pushed down, behind the pane (which
+   frosts it), as in the reference. */
+[data-gp-css='full'] > [data-gp-css-layer='shadow'] {
+  box-shadow: none;
+  box-sizing: border-box;
+  border: calc(6px * var(--gp-css-s, 1)) solid var(--gp-css-shadow-color, rgb(10 30 60));
+  transform: translateY(calc(16px * var(--gp-css-s, 1))) scaleX(0.93);
+  filter: blur(calc(14px * var(--gp-css-s, 1)));
+  opacity: var(--gp-css-shadow-o, 0.3);
+}
+/* Caustic: light bundled under the glass — a blurred ring masked to two soft
+   spots. (Blur outside, mask inside: the blur isn't cut sharp.) */
+[data-gp-css-layer='caustic'] {
+  transform: translateY(calc(10px * var(--gp-css-s, 1))) scale(0.86);
+  filter: blur(calc(10px * var(--gp-css-s, 1)));
+}
+[data-gp-css-layer='caustic'] > span {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-sizing: border-box;
+  border: calc(9px * var(--gp-css-s, 1)) solid #fff;
+  opacity: var(--gp-css-caustic-o, 0.7);
+  mask-image:
+    radial-gradient(70% 120% at 78% 0%, rgb(0 0 0 / 0.58) 0%, rgb(0 0 0 / 0.42) 35%, rgb(0 0 0 / 0.18) 62%, transparent 85%),
+    radial-gradient(70% 120% at 22% 100%, rgb(0 0 0 / 0.58) 0%, rgb(0 0 0 / 0.42) 35%, rgb(0 0 0 / 0.18) 62%, transparent 85%),
+    linear-gradient(rgb(0 0 0 / 0.4) 0 0);
+  mask-composite: add, add;
+}
+/* Pane: the frost + the group's tint (backdrop-filter is set inline by
+   cssGlass.js — CSS minifiers like to drop one of the prefixed pair). */
+[data-gp-css-layer='pane'] {
+  background: var(--gp-css-tint, transparent);
+}
+/* Edge layers: a ring that softens inwards (four sides + four corners,
+   added), cut by a conic arc (intersect) that picks which part of the edge
+   the layer owns. Sides cover only the straight runs and corners only their
+   quarter, so they meet at the tangent instead of overlapping into a kink. */
+:is([data-gp-css-layer='fold'], [data-gp-css-layer='glint'], [data-gp-css-layer='rim'], [data-gp-css-layer='spec']) {
+  --w: calc(var(--gp-css-edge-w, 1px) * var(--gp-css-s, 1));
+  --d: calc(var(--gp-css-edge-d, 2.5px) * var(--gp-css-s, 1));
+  --r: var(--gp-css-r, 12px);
+  mask-image:
+    var(--gp-arc),
+    linear-gradient(to bottom, #000 var(--w), transparent var(--d)),
+    linear-gradient(to top, #000 var(--w), transparent var(--d)),
+    linear-gradient(to right, #000 var(--w), transparent var(--d)),
+    linear-gradient(to left, #000 var(--w), transparent var(--d)),
+    radial-gradient(circle var(--r) at 100% 100%, transparent calc(var(--r) - var(--d)), #000 calc(var(--r) - var(--w))),
+    radial-gradient(circle var(--r) at 0 100%, transparent calc(var(--r) - var(--d)), #000 calc(var(--r) - var(--w))),
+    radial-gradient(circle var(--r) at 100% 0, transparent calc(var(--r) - var(--d)), #000 calc(var(--r) - var(--w))),
+    radial-gradient(circle var(--r) at 0 0, transparent calc(var(--r) - var(--d)), #000 calc(var(--r) - var(--w)));
+  mask-size:
+    auto,
+    calc(100% - 2 * var(--r)) 100%,
+    calc(100% - 2 * var(--r)) 100%,
+    100% calc(100% - 2 * var(--r)),
+    100% calc(100% - 2 * var(--r)),
+    var(--r) var(--r), var(--r) var(--r), var(--r) var(--r), var(--r) var(--r);
+  mask-position:
+    0 0,
+    var(--r) 0,
+    var(--r) 100%,
+    0 var(--r),
+    100% var(--r),
+    0 0, 100% 0, 0 100%, 100% 100%;
+  mask-repeat: no-repeat;
+  /* Nine values for nine layers — a shorter list repeats cyclically. */
+  mask-composite: intersect, add, add, add, add, add, add, add, add;
+}
+/* Fold: the whole folding band of the rim, a little brighter. */
+[data-gp-css-layer='fold'] {
+  --gp-arc: linear-gradient(#000 0 0);
+  --w: 0px;
+  --d: calc(var(--gp-css-r, 12px) * var(--gp-css-fold-k, 0.43));
+}
+/* Veil: a milky white wash over the pane (frosted style). */
+[data-gp-css-layer='veil'] {
+  background: linear-gradient(to bottom, rgb(255 255 255 / var(--gp-css-veil, 0)), rgb(255 255 255 / calc(var(--gp-css-veil, 0) * 0.45)));
+}
+[data-gp-css-layer='glint'],
+[data-gp-css-layer='spec'] {
+  --gp-arc: var(--gp-css-arc-glint, linear-gradient(#000 0 0));
+}
+[data-gp-css-layer='rim'] {
+  --gp-arc: var(--gp-css-arc-rim, linear-gradient(transparent 0 0));
+}
+/* Spec: additive white on the lit edge (shows over black, where the
+   brightness layers can't). No mix-blend-mode: it would make a backdrop root. */
+[data-gp-css-layer='spec'] {
+  background: rgb(255 255 255 / var(--gp-css-spec, 0.13));
+}
+
 /* Lens bar (tab bar / sidebar): the lens sits under the items. */
 :where([data-gp-lensbar]) {
   position: relative;
   box-sizing: border-box;
   touch-action: pan-y;
   -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
   user-select: none;
+}
+/* Pressing and sliding along the bar moves the lens — it must never start
+   dragging the link / image under the pointer (widgets.js also cancels
+   dragstart; this covers Safari, which starts link drags on its own). */
+:where([data-gp-lensbar]) :where(a, img, svg, [data-gp-item]) {
+  -webkit-user-drag: none;
+  user-drag: none;
 }
 :where([data-gp-lensbar='vertical']) {
   touch-action: pan-x;
 }
+/* Tab bar: iOS proportions (62px tall), and
+   above the "top" glass canvas it's drawn on (global.zIndex.top, 48). */
 :where([data-gp-lensbar='horizontal']) {
   display: flex;
   align-items: stretch;
+  min-height: 62px;
   padding: 4px;
   border-radius: 999px;
   background: rgba(120, 120, 128, 0.2);
+  z-index: 50;
 }
 :where([data-gp-lensbar='vertical']) {
   display: flex;
@@ -435,6 +591,21 @@ html[data-glass='on'] [data-glass-active][data-glass-icon-size] svg {
 }
 :where([data-gp-lensbar='horizontal']) > :where([data-gp-item]) {
   flex: 1;
+  /* iOS tab: icon over a small bold label, centred. */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0;
+  font-size: 11px;
+  font-weight: 600;
+  text-decoration: none;
+  border-radius: 999px;
+}
+/* WebGL glass drawn → its own shadows / rim replace the CSS ones. */
+:where([data-gp-lensbar], [data-gp-lens])[data-glass-drawn] {
+  box-shadow: none;
 }
 
 /* Progress bar: track (root) → fill → bead. */

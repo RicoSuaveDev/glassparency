@@ -28,9 +28,14 @@
  *        float — z-index 49: over page content, under the header (50),
  *                docks (90) and dialogs (100) — typical values
  *        modal — inside an open dialog (see <GlassLayerHost>)
- *        top   — z-index 48: in front of all page content, under the
- *                floating UI (e.g. a draggable glass orb hosts it with
- *                <GlassLayerHost layer="top">)
+ *        top   — z-index 48 (global.zIndex.top): in front of all page
+ *                content, under the floating UI. Tab bars use it by default
+ *                (the iOS look: WebGL glass everywhere, phones included —
+ *                "top" is in the default global.mobileLayers). The provider
+ *                mounts a window-fixed host for it by itself while any glass
+ *                is on "top"; an app can host it elsewhere with
+ *                <GlassLayerHost layer="top"> (e.g. a draggable glass orb's
+ *                own container), which then wins.
  *      The canvases ignore the mouse (pointer-events: none).
  *   4. once the first frame is drawn, sets <html data-glass="on">, which
  *      (glass.css) makes glass elements' own CSS backgrounds transparent so
@@ -52,7 +57,7 @@ import { lazy, Suspense, useCallback, useEffect, useInsertionEffect, useLayoutEf
 import { createPortal } from 'react-dom';
 import glassCss from './glass.css?inline';
 import { configureGlass, getGlobal, glassRoot, notifyConfigChanged, subscribeConfig } from './config';
-import { getHosts, holdRender, registerHost, requestRender, setIconRenderer, setStatus, subscribeHosts } from './registry';
+import { allEntries, getHosts, holdRender, placement, registerFallbackHost, registerHost, requestRender, setIconRenderer, setStatus, subscribeHosts, subscribeProps, subscribeStructure } from './registry';
 import { scheduleLiveSync, startLive } from './live';
 import { setSnapshotNonce } from './snapshot';
 import { defineGlassElement } from './element';
@@ -297,6 +302,20 @@ export default function GlassProvider({ children, config, renderIcon, injectStyl
   const onLost = useCallback((why) => setLost(why), []);
   const onReady = useCallback(() => setReady(true), []);
 
+  // Is any glass on layer "top"? (Then the provider mounts its own fallback
+  // host for it — see TopHost. No "top" glass → no extra canvas.)
+  const [usesTop, setUsesTop] = useState(false);
+  useEffect(() => {
+    const check = () => setUsesTop(allEntries().some((e) => placement(e.id).layer === 'top'));
+    const offS = subscribeStructure(check);
+    const offP = subscribeProps(check);
+    check();
+    return () => {
+      offS();
+      offP();
+    };
+  }, []);
+
   return (
     <>
       {children}
@@ -308,6 +327,7 @@ export default function GlassProvider({ children, config, renderIcon, injectStyl
           </>,
           document.body
         )}
+      {drawing && usesTop && createPortal(<TopHost z={layout.zTop} />, document.body)}
       {active &&
         [...hosts.entries()].map(([layer, el]) =>
           createPortal(
@@ -337,7 +357,7 @@ export default function GlassProvider({ children, config, renderIcon, injectStyl
 /** The config settings the provider lays the page out with (+ a change key). */
 function layoutOf() {
   const g = getGlobal();
-  const out = { zBase: g.zIndex.base, zFloat: g.zIndex.float, mobileQuery: g.mobileQuery, root: g.root, anchor: g.anchor };
+  const out = { zBase: g.zIndex.base, zFloat: g.zIndex.float, zTop: g.zIndex.top, mobileQuery: g.mobileQuery, root: g.root, anchor: g.anchor };
   return { ...out, key: JSON.stringify(out) };
 }
 
@@ -369,6 +389,18 @@ function BodyHost({ layer, z, anchor }) {
       ? { position: 'absolute', left: 0, top: 0, width: '100%', height: '100vh', zIndex: z, pointerEvents: 'none' }
       : { position: 'fixed', inset: 0, zIndex: z, pointerEvents: 'none' };
   return <div ref={ref} data-glass-host={layer} data-glass-anchor={anchor} data-glass-ignore="" aria-hidden="true" style={style} />;
+}
+
+/**
+ * The provider's own host for layer "top": fixed to the window (never
+ * page-anchored — "top" glass is pinned UI like a tab bar, which a canvas
+ * scrolling with the page would skip). A FALLBACK: a <GlassLayerHost
+ * layer="top"> the app mounts itself takes over while it's there.
+ */
+function TopHost({ z }) {
+  const ref = useRef(null);
+  useLayoutEffect(() => registerFallbackHost('top', ref.current), []);
+  return <div ref={ref} data-glass-host="top" data-glass-ignore="" aria-hidden="true" style={{ position: 'fixed', inset: 0, zIndex: z, pointerEvents: 'none' }} />;
 }
 
 /**

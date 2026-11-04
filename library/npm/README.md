@@ -218,6 +218,9 @@ when pressed (see "Squish & stretch").
 - **Tab bar:** like iOS 26. Press and slide along it: the selection lifts into a clear glass lens, bigger than the
   bar, that follows your finger, stretches with its speed and magnifies the icons under it. The accent colour
   wipes across each icon exactly where the lens is. Let go and it lands on the nearest tab with a wobble.
+  It's WebGL glass on layer `top` in every browser **and on phones** (no setup: the provider hosts that layer
+  itself, and `top` is in the default `global.mobileLayers`), sized like iOS (62px tall, icon over an 11px
+  label). Give the bar's wrapper a `z-index` above 48 if it's inside a stacking context.
 - **Sidebar:** the same sliding lens, vertical (click a row, or press and drag).
 - **Progress bar:** a glass fill that springs to its value, with an optional glass bead on its end. With no value it
   shows a liquid drop sliding back and forth.
@@ -500,12 +503,14 @@ element (also `var(--token, fallback)`). A colour's own alpha is ignored: use th
 | `root` | `"body"` | CSS selector of your app's root. Its changes trigger redraws, and WebGL floating glass photographs it |
 | `background` | `"auto"` | What base glass refracts (see "Page background") |
 | `mobileQuery` | `"(max-width: 860px)"` | Layout that never starts WebGL (phones get your CSS). `null` = always try |
-| `zIndex` | `{ base: -1, float: 49 }` | Stacking of the page‑wide canvases (see "Layers") |
+| `cssGlass` | `true` | The library's own CSS Liquid Glass wherever WebGL / live glass isn't drawing an element (Safari / Firefox without WebGL, phones, before WebGL starts): frosted pane in the group's tint, lit and unlit edges, soft shadow. `true` = 2 backdrop layers per element, `"full"` = 4 + a caustic (heavier), `"lite"` = 1, `false` = your own CSS only |
+| `mobileLayers` | `["top"]` | Layers that still get WebGL in the mobile layout (only their own glass: tab bars). `[]` = all CSS there |
+| `zIndex` | `{ base: -1, float: 49, top: 48 }` | Stacking of the page‑wide canvases (see "Layers") |
 | `theme` | `"auto"` | `"light"` / `"dark"` forces a theme |
 | `anchor` | `"viewport"` | `"page"` = the canvases scroll with the page (see "Phones and tablets") |
 | `maxDpr`, `bufferScale` | 1.5, 1 | Render resolution caps |
 | `quality` | `"auto"` | Automatic quality: full quality, stepped down (`medium`: ≤ 4 samples, ¾ buffer, ≤ 1.25 dpr; `low`: ≤ 3, ½, 1) only while **animating** glass runs under ~40 fps, and back up once smooth. An idle page is never throttled. `"high"` / `"medium"` / `"low"` = fixed. `getGlassQuality()` says which level is in use |
-| `snapshot` | `{ enabled, debounceMs, minIntervalMs, margin, scale }` | Page pictures for WebGL floating glass |
+| `snapshot` | `{ enabled, debounceMs, minIntervalMs, margin, scale, fullPage: "mobile", mobileScale: 2 }` | Page pictures for WebGL floating glass. `fullPage` pictures the whole page (`true` / `"mobile"` / `false`), so pinned glass never runs out of picture while scrolling |
 | `debugOutlines` | `false` | Pink outline round every slab |
 
 ---
@@ -521,7 +526,7 @@ layer**, not per element:
 | `base` | `global.zIndex.base` (−1) | Behind all page content. It refracts the page background (cards, buttons, sidebars). |
 | `float` | `global.zIndex.float` (49) | Over the content. Headers, docks, menus. In Chromium it refracts the live page; elsewhere a picture of it. |
 | `modal` | inside your dialog | Put `<GlassLayerHost />` inside your dialog's backdrop element. The backdrop's colour is used as the dimmer. |
-| `top` | inside your container | Put `<GlassLayerHost layer="top" />` in a positioned container. |
+| `top` | `global.zIndex.top` (48) | Pinned UI over the page (tab bars, by default). The provider hosts it, fixed to the window, while any glass uses it; a `<GlassLayerHost layer="top" />` of your own takes over. |
 
 - A layer is picked automatically from the nearest glass parent. A group can force one with `layer`.
 - Glass on glass works: a button refracts the card it sits on.
@@ -596,7 +601,7 @@ from (first match wins):
 A site that never mentions dark mode stays light.
 
 ### Phones and tablets
-- **Default:** below `mobileQuery` (860 px wide) the glass doesn't start, and your CSS shows instead.
+- **Default:** below `mobileQuery` (860 px wide) the WebGL glass doesn't start (tab bars aside): glass elements get the library's CSS Liquid Glass instead (`global.cssGlass`), or your own CSS with `cssGlass: false`.
 - **Why:** mobile browsers scroll the page on their own thread and tell the page afterwards. A canvas fixed
   to the window is always redrawn a frame or more late, so its glass trails the content while you scroll.
 - **To use the glass on phones,** set `global.anchor: "page"` together with `mobileQuery: null`. The canvases

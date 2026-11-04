@@ -32,6 +32,7 @@ import { scheduleLiveSync } from './live';
 import { createSquish } from './squish';
 import { createRipples } from './ripple';
 import { autoTextEls, autoTextOf, dropAutoText, estimateAutoText } from './autoText';
+import { applyCssGlass, removeCssGlass } from './cssGlass';
 
 export function useGlass(ref, group, props) {
   const handleRef = useRef(null);
@@ -123,6 +124,9 @@ export function attachGlass(el, group, props = {}) {
     // Corners follow the glass shape (so CSS borders/shadows/focus rings match).
     setVar(el, 'glassRadius', '--glass-radius', cssRadius(cfg, cfg.enabled ? null : explicitKeys(group, current, entryState)));
     applyPadding(el, cfg);
+    // The library's own CSS glass, shown wherever WebGL / live glass isn't
+    // drawing this element (glass.css hides it once they do).
+    applyCssGlass(el, cfg.enabled ? cfg : null);
   };
   applyDom();
   // Own press-glow value (it inherits, so don't light up with a parent).
@@ -319,6 +323,7 @@ export function attachGlass(el, group, props = {}) {
       squish?.destroy();
       ripples?.destroy();
       for (const v of ['--glass-px', '--glass-py', '--glass-glow']) el.style.removeProperty(v);
+      removeCssGlass(el);
       for (const k of ['glassActive', 'glassGroup', 'glassBorder', 'glassShadow']) setFlag(el, k, null);
       dropAutoText(el);
       for (const [k, v] of FLAG_VARS) setVar(el, k, v, null);

@@ -140,11 +140,6 @@
       "style": "default",
       "layer": "float",
       "shape": "capsule",
-      "bleed": {
-        "top": 40,
-        "left": 40,
-        "right": 40
-      },
       "padding": {
         "top": 20,
         "right": 20,
@@ -1055,7 +1050,7 @@
       "shadowOpacity": 0
     },
     "tabLensActive": {
-      "$comment": "Tab bar lens while pressed / dragged: clear glass, bigger than the bar, that SHRINKS what's behind it a little (minify 0.12 — measured from iOS 26 Music: the bar shows at ~89% of its height inside the lens, so the page just above / below it shows as dark bands that curve into the rim; it used to magnify, minify -0.1, which looked flat) and bends the tab icons under it (live glass lifts it above them; elsewhere widgets.js lens optics).",
+      "$comment": "Tab bar lens while pressed / dragged: clear glass, bigger than the bar, that SHRINKS what's behind it a little (minify 0.12 — measured from iOS 26 Music: the bar shows at ~89% of its height inside the lens, so the page just above / below it shows as dark bands that curve into the rim; it used to magnify, minify -0.1, which looked flat) and bends the tab icons under it (live glass lifts it above them; elsewhere widgets.js lens optics). chromaticAberration 0.04: only a faint colour fringe (0.15 fringed visibly).",
       "style": "default",
       "shape": "capsule",
       "tint": "#ffffff",
@@ -1064,7 +1059,7 @@
       "bevel": 14,
       "ior": 1.35,
       "blur": 0,
-      "chromaticAberration": 0.15,
+      "chromaticAberration": 0.04,
       "saturation": 1.2,
       "brightness": 1.06,
       "rimLight": 0.95,

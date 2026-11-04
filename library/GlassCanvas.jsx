@@ -65,6 +65,11 @@ const rippleAt = new THREE.Vector3();
 
 const MAX_LIQUID = 16; // shapes per morph group
 const UNIT_PLANE = new THREE.PlaneGeometry(1, 1); // shared by every shadow layer
+// Animating sizes reuse the current slab mesh, stretched, for changes up to
+// this fraction of its size; the exact mesh is built once the size has held
+// still this long (see the geometry block in the slab's frame).
+const GEO_SLACK = 0.08;
+const GEO_SETTLE_MS = 120;
 import { backgroundFor, fullscreenVertexShader, isImageBackdrop, pageBackgroundShader, pageImageShader, setImageBackdrop } from './pageBackground';
 
 const CAMERA_Z = 100000; // far away → view direction is straight down everywhere
@@ -589,7 +594,22 @@ function GlassMesh({ entry, controllers, sharedTexture }) {
     const o = outline(p.shape, box.width * a.sx, box.height * a.sy, p.radius, c.cssRadius);
     const bevel = Math.min(p.bevel, o.r > 0 ? o.r : p.bevel);
     const key = `${o.w}|${o.h}|${o.r}|${bevel}|${p.bevelSegments}|${p.profile}`;
-    if (key !== c.shapeKey) {
+    // A bevelled slab takes milliseconds to build (far more on a phone), and
+    // glass whose size animates (a tab bar lens stretching while dragged, a
+    // squishing knob) changed size EVERY frame — a new mesh per frame made
+    // dragging crawl. So while the size is MOVING, a change of up to
+    // GEO_SLACK keeps the current mesh and stretches it to fit (a few % —
+    // invisible); the exact mesh is built once the size has held still for
+    // GEO_SETTLE_MS (or at once for a bigger jump / another shape).
+    const now = performance.now();
+    const sameKind = c.geo && c.geo.r === o.r && c.geo.bevel === bevel && c.geo.segments === p.bevelSegments && c.geo.profile === p.profile;
+    const nearSize = sameKind && Math.abs(o.w / c.geo.w - 1) <= GEO_SLACK && Math.abs(o.h / c.geo.h - 1) <= GEO_SLACK;
+    if (key !== c.lastKey) {
+      c.lastKey = key;
+      c.keySince = now;
+    }
+    const settled = now - (c.keySince || 0) >= GEO_SETTLE_MS;
+    if (key !== c.shapeKey && (!nearSize || settled)) {
       const nextSlab = acquireGeometry('slab', { ...o, bevel, depth: 1, segments: p.bevelSegments, profile: p.profile });
       const nextFlat = acquireGeometry('flat', o);
       c.slabGeo?.release();
@@ -597,11 +617,19 @@ function GlassMesh({ entry, controllers, sharedTexture }) {
       c.slabGeo = nextSlab;
       c.flatGeo = nextFlat;
       c.shapeKey = key;
+      c.geo = { w: o.w, h: o.h, r: o.r, bevel, segments: p.bevelSegments, profile: p.profile };
       slab.current.geometry = nextSlab.geo;
       tint.current.geometry = nextFlat.geo;
-      tintMat.uniforms.uSize.value.set(o.w, o.h);
       tintMat.uniforms.uRadius.value = o.r;
     }
+    // Stretch the mesh to the real size (1 × 1 once the exact one is built).
+    const gsx = c.geo ? o.w / c.geo.w : 1;
+    const gsy = c.geo ? o.h / c.geo.h : 1;
+    slab.current.scale.set(gsx, gsy, 1);
+    tint.current.scale.set(gsx, gsy, 1);
+    tintMat.uniforms.uSize.value.set(o.w, o.h);
+    // (Keep frames coming until the exact mesh is in.)
+    if (key !== c.shapeKey) c.animating = true;
 
     // Position: centre of the (bled) box (y up).
     g.position.set(box.left + box.width / 2, -(box.top + box.height / 2), 0);

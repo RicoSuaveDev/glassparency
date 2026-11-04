@@ -127,7 +127,11 @@ export interface GlassGlobal {
   backgroundImage?: string | null;
   /** Layout that never starts WebGL (CSS glass only). Default "(max-width: 860px)"; null = never. */
   mobileQuery?: string | null;
-  zIndex?: { base?: number; float?: number };
+  /** The library's own CSS Liquid Glass where WebGL / live glass isn't drawing: true (default, 2 backdrop layers), "full", "lite" or false. */
+  cssGlass?: boolean | 'full' | 'lite';
+  /** Layers that still get WebGL in the mobile layout (only their own glass). Default ["top"] (tab bars). */
+  mobileLayers?: GlassLayer[];
+  zIndex?: { base?: number; float?: number; top?: number };
   theme?: 'auto' | 'light' | 'dark';
   /** Where the page-wide canvases sit: "viewport" (fixed, default) or "page" (scrolls with the page: no lag on phones). */
   anchor?: 'viewport' | 'page';
@@ -136,7 +140,17 @@ export interface GlassGlobal {
   /** "auto" (default) = full quality, throttled only while animation is too slow; or a fixed level. */
   quality?: 'auto' | 'high' | 'medium' | 'low';
   debugOutlines?: boolean;
-  snapshot?: { enabled?: boolean; debounceMs?: number; minIntervalMs?: number; margin?: number; scale?: number };
+  snapshot?: {
+    enabled?: boolean;
+    debounceMs?: number;
+    minIntervalMs?: number;
+    margin?: number;
+    scale?: number;
+    /** Picture the whole page: true, "mobile" (default: only in the mobile layout) or false. */
+    fullPage?: boolean | 'mobile';
+    /** Picture resolution in the mobile layout (default 2). */
+    mobileScale?: number;
+  };
 }
 
 export interface GlassConfig {
@@ -489,7 +503,7 @@ export declare const GLASS_LAYERS: GlassLayer[];
 export declare const GLASS_STATE_KEYS: Array<'hover' | 'pressed' | 'disabled'>;
 export declare const GLASS_LIVE_SUPPORTED: boolean;
 export declare function getGlassGlobal(): Required<Omit<GlassGlobal, 'zIndex' | 'snapshot'>> & {
-  zIndex: { base: number; float: number };
+  zIndex: { base: number; float: number; top: number };
   snapshot: Required<NonNullable<GlassGlobal['snapshot']>>;
 };
 export declare function glassGroupNames(): string[];

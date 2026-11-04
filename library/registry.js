@@ -157,7 +157,8 @@ export function isFloatingGlass(el) {
 // --- Layer hosts (where each layer's canvas is mounted) --------------------------------
 // "base" and "float" are created by <GlassProvider>; "modal" (a dialog) and
 // "top" (e.g. a glass orb) by <GlassLayerHost>
-// inside an open dialog or the orb's own container.
+// inside an open dialog or the orb's own container. ("top" also has a
+// provider-made fallback host — see registerFallbackHost below.)
 //
 // STACKED DIALOGS: a dialog opened from inside another (the "Delete this
 // task?" confirm over the Edit task dialog) registers a second "modal" host.
@@ -179,8 +180,26 @@ export function registerHost(layer, el) {
     hostListeners.forEach((fn) => fn());
   };
 }
-/** layer → the host element its canvas is mounted in (the top of its stack). */
-export const getHosts = () => new Map([...hosts].map(([layer, stack]) => [layer, stack[stack.length - 1]]));
+// FALLBACK hosts: <GlassProvider> mounts a "top" host of its own (fixed to the
+// window, z-index global.zIndex.top) so a tab bar — on layer "top" by
+// default — gets real glass with no <GlassLayerHost> in the app. A host the
+// app registers itself always wins over it, and fallbacks never count as
+// "newer" hosts in isCoveredHost (the app's own host isn't covering anything).
+const fallbackHosts = new Map(); // layer → HTMLElement
+export function registerFallbackHost(layer, el) {
+  fallbackHosts.set(layer, el);
+  hostListeners.forEach((fn) => fn());
+  return () => {
+    if (fallbackHosts.get(layer) === el) fallbackHosts.delete(layer);
+    hostListeners.forEach((fn) => fn());
+  };
+}
+/** layer → the host element its canvas is mounted in (the top of its stack, else the layer's fallback). */
+export const getHosts = () => {
+  const out = new Map(fallbackHosts);
+  for (const [layer, stack] of hosts) out.set(layer, stack[stack.length - 1]);
+  return out;
+};
 /**
  * Is this element's glass covered by a newer host of its own layer? (A dialog
  * under a confirm.) Its glass isn't drawn then — the only canvas is the top

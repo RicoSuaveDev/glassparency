@@ -79,8 +79,20 @@ function roundRectPath(x, y, w, h, r) {
 // Held tab-bar lens proportions (iOS 26 Music, measured from screenshots:
 // 1.33–1.49 wide : 1 tall): with few, wide items the lens used to take the
 // item's whole width and looked too wide. While it lifts, its length eases
-// down to at most this × its height; the stretch while moving still adds to it.
+// to the size of the tab it's over (below), never more than this × its
+// height unless that tab's own content is wider; the stretch while moving
+// still adds to it.
 const LENS_MAX_ASPECT = 1.45;
+// Held lens length = the hovered tab's CONTENT (icon + label) plus this ×
+// the lens height of room round it, at least a circle (1 × height) — so
+// while you drag, the lens grows and shrinks to fit each tab it passes
+// ("Search" vs "Recently Added").
+// PERFORMANCE: every new lens size makes WebGL glass build a new bevelled
+// mesh (~3 ms on a fast Mac, far more on a phone). A size blended by the
+// finger's position changed EVERY frame of a drag and made the bar crawl,
+// so the held size eases to the NEAREST tab's size (a quick spring, whole
+// px) and stays put in between: new meshes only for a few frames per tab.
+const LENS_CONTENT_PAD = 0.55;
 
 /** A config group's squish tuning, for createSquish. */
 const squishCfg = (group, props) => () => {
@@ -516,7 +528,13 @@ export function createLensBar(root, opts = {}) {
   lens.setAttribute('aria-hidden', 'true');
   root.insertBefore(lens, root.firstChild);
 
-  const barFixed = { ...layerFor(root), ...(props.bar || {}) };
+  // Layer: a TAB BAR on its own goes on "top" — WebGL glass in every browser
+  // and on phones (default global.mobileLayers), refracting a picture of the
+  // page, like the iOS tab bar. A sidebar stays on "float" (live glass in
+  // Chromium).
+  // Inside other glass: that glass's layer, as before. props.bar.layer wins.
+  const own = layerFor(root);
+  const barFixed = { ...(own.layer && !vertical ? { layer: 'top' } : own), ...(props.bar || {}) };
   const barGlass = attachGlass(root, groups.bar, barFixed);
   const lensGlass = attachGlass(lens, groups.lens, props.lens || {});
   const setLens = propSetter(lensGlass, props.lens || {});
@@ -535,20 +553,55 @@ export function createLensBar(root, opts = {}) {
     items().map((it) =>
       vertical
         ? { a: it.offsetTop, size: it.offsetHeight, c: it.offsetTop + it.offsetHeight / 2, b: it.offsetLeft, bs: it.offsetWidth }
-        : { a: it.offsetLeft, size: it.offsetWidth, c: it.offsetLeft + it.offsetWidth / 2, b: it.offsetTop, bs: it.offsetHeight }
+        : { a: it.offsetLeft, size: it.offsetWidth, c: it.offsetLeft + it.offsetWidth / 2, b: it.offsetTop, bs: it.offsetHeight, cw: contentWidth(it) }
     );
+  /**
+   * Width of an item's own content (icon + label), in px — its children
+   * other than our wipe copies (those fill the whole item). Read only while
+   * the lens is held (render asks for it then), so a resting bar never
+   * measures text.
+   */
+  // Measured once per press (and after the items change), not every frame.
+  let contentCache = new WeakMap();
+  const contentWidth = (it) => {
+    if (!cur.lift && !press) return 0;
+    if (contentCache.has(it)) return contentCache.get(it);
+    const w = measureContent(it);
+    contentCache.set(it, w);
+    return w;
+  };
+  const measureContent = (it) => {
+    let l = Infinity;
+    let r = -Infinity;
+    const add = (rect) => {
+      if (!rect || rect.width < 0.5) return;
+      l = Math.min(l, rect.left);
+      r = Math.max(r, rect.right);
+    };
+    for (const n of it.childNodes) {
+      if (n.nodeType === 1 && !n.hasAttribute('data-gp-wipe')) add(n.getBoundingClientRect());
+      else if (n.nodeType === 3 && n.textContent.trim()) {
+        const range = document.createRange();
+        range.selectNodeContents(n);
+        add(range.getBoundingClientRect());
+      }
+    }
+    // (Rects are in screen px; a scaled bar's offsets aren't — undo the scale.)
+    const k = it.offsetWidth ? it.getBoundingClientRect().width / it.offsetWidth : 1;
+    return r > l ? (r - l) / (k || 1) : 0;
+  };
 
   // Lens state: p = centre along the bar (px), v = its speed (px/s), lift 0 … 1.
-  const cur = { p: null, v: 0, lift: 0 };
+  const cur = { p: null, v: 0, lift: 0, hl: null, hv: 0 }; // hl/hv: held lens length (px) + its speed
   let press = null; // { id, start, moved, grab }
   let goal = null; // where the lens is heading (px) when not held
 
-  /** Lens length at centre p: blends the sizes of the items it's between. */
-  const sizeAt = (bx, p) => {
+  /** Lens length at centre p: blends the sizes of the items it's between (pick = which size of an item). */
+  const sizeAt = (bx, p, pick = (b) => b.size) => {
     if (!bx.length) return 0;
-    if (p <= bx[0].c) return bx[0].size;
-    for (let i = 0; i < bx.length - 1; i++) if (p <= bx[i + 1].c) return lerp(bx[i].size, bx[i + 1].size, (p - bx[i].c) / (bx[i + 1].c - bx[i].c || 1));
-    return bx[bx.length - 1].size;
+    if (p <= bx[0].c) return pick(bx[0]);
+    for (let i = 0; i < bx.length - 1; i++) if (p <= bx[i + 1].c) return lerp(pick(bx[i]), pick(bx[i + 1]), (p - bx[i].c) / (bx[i + 1].c - bx[i].c || 1));
+    return pick(bx[bx.length - 1]);
   };
   const nearest = (bx, p) => {
     let best = 0;
@@ -607,6 +660,7 @@ export function createLensBar(root, opts = {}) {
     root.style.setProperty('--gp-item-base', getComputedStyle(root).color);
   };
   const syncWipes = () => {
+    contentCache = new WeakMap(); // (items / labels changed)
     readBaseColor();
     const its = items();
     for (const [it, w] of wipes) {
@@ -640,16 +694,28 @@ export function createLensBar(root, opts = {}) {
         })
       : null;
 
+  /** Held lens length over item box b (cross = the lens's height). */
+  const heldLenOf = (b, cross) => {
+    const fit = b.cw > 0 ? b.cw + cross * LENS_CONTENT_PAD : b.size;
+    const max = Math.max(cross * LENS_MAX_ASPECT, b.cw + cross * 0.25);
+    return Math.min(b.size, Math.max(cross, Math.min(fit, max)));
+  };
+  /** The held length the lens eases to: the nearest tab's (tab bars only). */
+  const heldGoal = (bx) => heldLenOf(bx[nearest(bx, cur.p ?? bx[index]?.c ?? 0)], root.clientHeight - inset * 2);
+
   const render = () => {
     const bx = boxes();
     if (!bx.length) return;
     if (cur.p == null) cur.p = bx[index]?.c ?? bx[0].c;
     const crossStart = vertical ? 0 : inset;
     const crossSize = vertical ? bx[0].bs : (vertical ? root.clientWidth : root.clientHeight) - inset * 2;
-    // Item length — capped to LENS_MAX_ASPECT × height as the lens lifts
-    // (tab bars only; a sidebar's lens is a full-width row).
+    // Item length; as the lens lifts it eases to the HELD size of the tab
+    // under it — fitted to that tab's content, blended between neighbours,
+    // so it resizes live while dragged (tab bars only; a sidebar's lens is
+    // a full-width row).
     const itemLen = sizeAt(bx, cur.p);
-    const len = vertical ? itemLen : itemLen - Math.max(0, itemLen - crossSize * LENS_MAX_ASPECT) * cur.lift;
+    if (!vertical && cur.hl == null) cur.hl = heldGoal(bx);
+    const len = vertical ? itemLen : lerp(itemLen, Math.round(cur.hl), cur.lift);
     // Lifted: bigger; moving: stretched along the bar, thinner across it.
     const s = 1 + (lensScale - 1) * cur.lift;
     const st = stretchFor(vertical ? 0 : cur.v, vertical ? cur.v : 0, Math.abs(cur.v) * 0.0009 * (0.4 + 0.6 * cur.lift));
@@ -714,12 +780,24 @@ export function createLensBar(root, opts = {}) {
       cur.p = target;
       cur.v = 0;
       cur.lift = liftGoal;
+      if (!vertical) cur.hl = heldGoal(bx);
       render();
       return Boolean(press);
     }
     // Held: follows the finger closely. Let go: a softer, wobbly landing.
     const prevP = cur.p ?? target;
     [cur.p, cur.v] = spring(prevP, cur.v, target, press ? 900 : 260, press ? 0.9 : 0.62, dt);
+    // Held size: eases to the nearest tab's (see LENS_CONTENT_PAD), snapped
+    // once it's within half a px so the size — and the glass mesh — stays put.
+    if (!vertical) {
+      const hg = heldGoal(bx);
+      if (cur.hl == null) cur.hl = hg;
+      [cur.hl, cur.hv] = spring(cur.hl, cur.hv, hg, 700, 1, dt);
+      if (Math.abs(cur.hl - hg) < 0.5 && Math.abs(cur.hv) < 20) {
+        cur.hl = hg;
+        cur.hv = 0;
+      }
+    }
     cur.lift += (liftGoal - cur.lift) * (1 - Math.exp(-dt / (liftGoal ? 0.05 : 0.09)));
     const settled = !press && Math.abs(cur.p - target) < 0.1 && Math.abs(cur.v) < 3 && cur.lift < 0.003;
     if (settled) {
@@ -751,8 +829,10 @@ export function createLensBar(root, opts = {}) {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     if (!items().length) return;
     capture(root, e.pointerId);
+    contentCache = new WeakMap(); // (labels may have changed since the last press)
     const pos = along(e);
     press = { id: e.pointerId, start: pos, moved: false, target: followTarget(pos) };
+    cur.hl = null; // (re-fitted to the tab under the finger)
     barSquish.press(e.clientX, e.clientY);
     loop.kick();
   };
@@ -809,6 +889,12 @@ export function createLensBar(root, opts = {}) {
     const i = items().indexOf(it);
     if (i >= 0) select(i, true);
   };
+  // Pressing and sliding moves the lens: never let the browser start
+  // dragging the link (or icon image) under the pointer instead — that ended
+  // the press and dragged a URL around. (glass.css adds -webkit-user-drag:
+  // none for Safari.)
+  const noDrag = (e) => e.preventDefault();
+  root.addEventListener('dragstart', noDrag);
   root.addEventListener('pointerdown', down);
   root.addEventListener('pointermove', move);
   root.addEventListener('pointerup', up);
@@ -822,6 +908,7 @@ export function createLensBar(root, opts = {}) {
   const ro =
     typeof ResizeObserver === 'function'
       ? new ResizeObserver(() => {
+          contentCache = new WeakMap(); // (fonts / layout changed)
           if (!press) {
             cur.p = null;
             cur.v = 0;
@@ -856,6 +943,7 @@ export function createLensBar(root, opts = {}) {
       loop.stop();
       offConfig();
       ro?.disconnect();
+      root.removeEventListener('dragstart', noDrag);
       root.removeEventListener('pointerdown', down);
       root.removeEventListener('pointermove', move);
       root.removeEventListener('pointerup', up);

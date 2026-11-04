@@ -152,8 +152,9 @@ export const SCHEMA = {
 
 /** Layers, bottom to top. Each is its own transparent canvas in the page. */
 // 'top' = in front of all page content, just under the floating UI (e.g. a
-// draggable glass orb over the page); its canvas lives in its own container
-// (<GlassLayerHost layer="top">, z-index 48).
+// draggable glass orb over the page, or a tab bar — its default layer); its
+// canvas lives in the provider's own window-fixed host (global.zIndex.top,
+// 48) unless the app mounts a <GlassLayerHost layer="top">.
 export const LAYERS = ['base', 'float', 'modal', 'top'];
 export const STATE_KEYS = ['hover', 'pressed', 'disabled'];
 // Optional per-group fine-tuning for a style: "crystal": {…} / "frosted": {…}
@@ -321,15 +322,26 @@ export function getGlobal() {
     // listed get a canvas, and it draws only their own glass — so a single
     // piece of glass (e.g. a glass orb on layer "top") can be
     // real glass on phones without paying for the whole page.
-    mobileLayers: Array.isArray(g.mobileLayers) ? g.mobileLayers.filter((l) => LAYERS.includes(l)) : [],
+    // Default ["top"]: tab bars (layer "top") are real glass on phones too,
+    // like iOS. [] = everything CSS glass in the mobile layout.
+    mobileLayers: Array.isArray(g.mobileLayers) ? g.mobileLayers.filter((l) => LAYERS.includes(l)) : ['top'],
     // Stacking of the page-wide canvases: base glass sits behind the page
     // content, floating glass under the site's floating UI (HTML that floating
     // glass belongs to needs a HIGHER z-index than "float").
     zIndex: {
       base: Math.round(clamp(num(z.base, -1), -2147483647, 2147483647)),
       float: Math.round(clamp(num(z.float, 49), -2147483647, 2147483647)),
+      // "top" (tab bars): the provider's own window-fixed host for it. The
+      // tab bar's HTML (icons, labels) must sit ABOVE it (glass.css gives
+      // tab bars z-index 50).
+      top: Math.round(clamp(num(z.top, 48), -2147483647, 2147483647)),
     },
     theme: g.theme === 'light' || g.theme === 'dark' ? g.theme : 'auto',
+    // The library's own CSS Liquid Glass (cssGlass.js) wherever WebGL / live
+    // glass isn't drawing an element: true (default: 2 backdrop layers per
+    // element) | "full" (4 + caustic) | "lite" (1) | false (the site's own
+    // CSS only, as before 1.3.6).
+    cssGlass: g.cssGlass === false ? false : g.cssGlass === 'lite' || g.cssGlass === 'full' ? g.cssGlass : true,
     // Where the page-wide canvases (base, float) sit:
     //   "viewport" (default) — fixed to the window, redrawn as the page scrolls.
     //   "page" — in the page itself, covering the visible part plus a margin,
@@ -351,10 +363,11 @@ export function getGlobal() {
       // global.mobileQuery layout) / false. Glass pinned over a scrolling
       // page (a phone's header + tab bar) then only slides the picture and
       // never runs out of it mid-scroll (snapshot.js).
-      fullPage: s.fullPage === true ? true : s.fullPage === 'mobile' ? 'mobile' : false,
+      // Default "mobile" (a phone's pinned tab bar never runs out of picture).
+      fullPage: s.fullPage === true ? true : s.fullPage === false ? false : 'mobile',
       // Picture resolution in the mobile layout (phones have 2–3× screens;
-      // crystal glass shows a soft picture). Default: the same as scale.
-      mobileScale: clamp(num(s.mobileScale, num(s.scale, 1)), 0.25, 3),
+      // crystal glass shows a soft picture). Default: 2 (or scale, if higher).
+      mobileScale: clamp(num(s.mobileScale, Math.max(2, num(s.scale, 1))), 0.25, 3),
     },
   };
 }
