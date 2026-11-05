@@ -31,6 +31,16 @@ import {
 } from 'glassparency';
 import './gallery.css';
 
+/**
+ * Glassparency 1.3.6 puts every GlassTabBar on the new "top" WebGL layer by
+ * default (a canvas fixed to the window, meant for a bar pinned over a page,
+ * like a phone tab bar). These demo bars sit INSIDE scrolling tiles, where
+ * that layer drew the bar glass out of line with the tile behind it (clipped
+ * halves, a stray capsule, a flat grey copy instead of refraction). "float"
+ * (the 1.3.5 behaviour) refracts the tile correctly.
+ */
+export const TAB_BAR_FLOAT = { bar: { layer: "float" } };
+
 // --- Glass groups ---------------------------------------------------------------
 const ACCENT = '#2b4bf2';
 /** [gallery group, built-in preset it copies, changes on top] */
@@ -269,6 +279,7 @@ function TabBarTile() {
     <Tile label="GlassTabBar" art="orange" word="Tabs">
       <GlassTabBar
         className="gx-tabbar lift"
+        glassProps={TAB_BAR_FLOAT}
         groups={{ bar: 'gxTabBar', lens: 'gxTabLens', lensActive: 'gxTabLensActive' }}
         value={tab}
         onChange={setTab}

@@ -28,7 +28,7 @@ import {
   requestGlassRender,
   useGlass,
 } from 'glassparency';
-import { GALLERY_GROUPS, Gallery } from './gallery';
+import { GALLERY_GROUPS, Gallery, TAB_BAR_FLOAT } from './gallery';
 
 // Every device: the glass canvases are anchored to the page. Browsers scroll on
 // their own thread (phones, and desktop trackpads / wheels too), so a
@@ -216,7 +216,7 @@ function TabBarTile() {
         ))}
       </div>
       <p className="hint lift">Press and slide along it</p>
-      <GlassTabBar className="tabbar lift" value={tab} onChange={setTab} role="tablist" aria-label="Sections">
+      <GlassTabBar glassProps={TAB_BAR_FLOAT} className="tabbar lift" value={tab} onChange={setTab} role="tablist" aria-label="Sections">
         {[['home', 'Home'], ['grid', 'New'], ['radio', 'Radio'], ['library', 'Library'], ['search', 'Search']].map(([icon, label]) => (
           <button key={label} type="button" role="tab" data-gp-item className="tab">
             <Ico d={ICONS[icon]} />
@@ -263,7 +263,7 @@ function StylesTile() {
         <div className="sa-word">{style}</div>
       </div>
       <div className="styles-body">
-        <GlassTabBar className="style-pick lift" value={pick} onChange={setPick} aria-label="Style">
+        <GlassTabBar glassProps={TAB_BAR_FLOAT} className="style-pick lift" value={pick} onChange={setPick} aria-label="Style">
           {STYLES.map((s) => (
             <button key={s} type="button" data-gp-item className="style-opt">{s[0].toUpperCase() + s.slice(1)}</button>
           ))}
