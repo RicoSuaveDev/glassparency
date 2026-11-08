@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.7 — 2026-11-08
+
+- Fixed: switches built from <input type="checkbox" data-glassparency-switch> in the script build (glassparency.standalone.js) showed an empty track with no knob in Safari and on phones. glass.css was being added after the page's controls were already built, so the CSS glass fallback measured the knob without its styles and collapsed it to 0×0. start() now adds glass.css before it upgrades any switches or sliders.
+- Fixed: the CSS glass fallback no longer re-positions switch knobs, so a knob keeps its shape even when glass.css loads late or you link it yourself with injectStyles: false.
+
 ## 1.3.6 — 2026-11-04
 
 - Every GlassTabBar now looks like the iOS 26 tab bar by default: real WebGL glass on layer "top" in every browser, phones included, with the clear lens that shrinks the bar inside it and bends the page into its rim.

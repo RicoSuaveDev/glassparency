@@ -59,7 +59,7 @@
  */
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
-import GlassProvider from './GlassProvider';
+import GlassProvider, { ensureGlassStyles } from './GlassProvider';
 import { attachGlass, getGlassProps, mergeGlassProps, setGlassProps } from './useGlass';
 import { createShapeSpring, glassMorph } from './motion';
 import { defineGlassElement } from './element';
@@ -115,6 +115,11 @@ export function start(options = {}) {
     container.setAttribute('data-glass-ignore', '');
     document.body.appendChild(container);
     reactRoot = createRoot(container);
+    // glass.css goes in NOW, not when React gets round to the provider's
+    // effect: startAuto() below builds the switches / sliders straight away,
+    // and they must be measured with our CSS already applied (see
+    // ensureGlassStyles in GlassProvider.jsx).
+    if (options.injectStyles ?? true) ensureGlassStyles(options.nonce);
     reactRoot.render(createElement(GlassProvider, { injectStyles: options.injectStyles ?? true, nonce: options.nonce }));
   }
   if (options.auto !== false) startAuto();

@@ -117,6 +117,25 @@ function safeMatch(query) {
 let owner = null;
 // glass.css added to the page once, however many times providers mount.
 let styleEl = null;
+
+/**
+ * Put glass.css on the page now (once). The provider calls it from its
+ * insertion effect; the script build (standalone.js start()) calls it BEFORE
+ * it upgrades the page's controls, because React renders the provider
+ * asynchronously — controls created first would be measured without our CSS
+ * (cssGlass.js read a switch knob as position: static and pinned it
+ * relative, which collapsed the knob to 0×0 in Safari / on phones).
+ * The provider still owns removal (its users count), so stop() cleans up.
+ * @param {string} [nonce] CSP nonce for the <style> element
+ */
+export function ensureGlassStyles(nonce) {
+  if (styleEl || typeof document === 'undefined') return;
+  styleEl = document.createElement('style');
+  styleEl.setAttribute('data-glass-styles', '');
+  if (nonce) styleEl.nonce = nonce;
+  styleEl.textContent = glassCss;
+  document.head.appendChild(styleEl);
+}
 let styleUsers = 0;
 
 export default function GlassProvider({ children, config, renderIcon, injectStyles = true, nonce }) {
@@ -164,13 +183,7 @@ export default function GlassProvider({ children, config, renderIcon, injectStyl
   useInsertionEffect(() => {
     if (!injectStyles || duplicate || typeof document === 'undefined') return undefined;
     styleUsers += 1;
-    if (!styleEl) {
-      styleEl = document.createElement('style');
-      styleEl.setAttribute('data-glass-styles', '');
-      if (nonce) styleEl.nonce = nonce;
-      styleEl.textContent = glassCss;
-      document.head.appendChild(styleEl);
-    }
+    ensureGlassStyles(nonce); // (already there when the script build added it early)
     return () => {
       styleUsers -= 1;
       if (styleUsers <= 0) {

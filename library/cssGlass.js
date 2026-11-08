@@ -235,7 +235,11 @@ export function applyCssGlass(el, cfg) {
     // A static element can't hold the absolutely placed layers: flag it so
     // glass.css makes it relative (only while the CSS glass shows). Read
     // before any of our rules apply; absolute / fixed / sticky keep theirs.
-    if (getComputedStyle(el).position === 'static') el.setAttribute('data-gp-css-static', '');
+    // Knobs are never flagged: glass.css places them absolute itself, and if
+    // that rule wasn't applied yet (page CSS still loading, injectStyles:
+    // false with glass.css linked late) the flag would make the knob an
+    // inline relative <span> — 0×0, an empty switch track.
+    if (!el.hasAttribute('data-gp-knob') && getComputedStyle(el).position === 'static') el.setAttribute('data-gp-css-static', '');
     el.prepend(box);
     el.setAttribute('data-gp-css-on', '');
     ro?.observe(el);
