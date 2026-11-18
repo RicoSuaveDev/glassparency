@@ -75,6 +75,7 @@ export function unregister(id) {
     delete e.el.dataset.glassDrawn; // (set by GlassCanvas once its slab is drawn)
   }
   entries.delete(id);
+  if (pinnedById.delete(id)) notifyPinned();
   structureChanged();
 }
 
@@ -218,6 +219,50 @@ export function subscribeHosts(fn) {
   return () => hostListeners.delete(fn);
 }
 
+// --- Pinned glass (anchor "page") -------------------------------------------------------
+// With global.anchor "page" the base / float / top canvases sit IN the page
+// and scroll with it, so glass on ordinary elements can never trail the
+// content. Glass on a fixed / sticky element would trail the other way, so
+// it is drawn by a second, window-fixed canvas for its layer instead: the
+// layer's "pinned" canvas. That canvas only exists while the layer has
+// pinned glass (GlassCanvas reports it here as it finds it).
+const pinnedById = new Map(); // entry id → its layer (only pinned entries)
+const pinnedListeners = new Set();
+let pinnedKey = '';
+/** GlassCanvas (page-anchored): is this element's glass pinned (fixed / sticky)? */
+export function setPinned(id, layer, on) {
+  const had = pinnedById.get(id);
+  if (on ? had === layer : had === undefined) return;
+  if (on) pinnedById.set(id, layer);
+  else pinnedById.delete(id);
+  notifyPinned();
+}
+function notifyPinned() {
+  const key = [...new Set(pinnedById.values())].sort().join(',');
+  if (key === pinnedKey) return; // (only the SET of layers matters to listeners)
+  pinnedKey = key;
+  pinnedListeners.forEach((fn) => fn());
+}
+/** Layers that have pinned glass right now. */
+export const pinnedLayers = () => (pinnedKey ? pinnedKey.split(',') : []);
+/** Is this element's glass pinned (as last reported)? */
+export const isPinnedEntry = (id) => pinnedById.has(id);
+export function subscribePinned(fn) {
+  pinnedListeners.add(fn);
+  return () => pinnedListeners.delete(fn);
+}
+// The window-fixed hosts of those pinned canvases (layer → element).
+const pinnedHosts = new Map();
+export function registerPinnedHost(layer, el) {
+  pinnedHosts.set(layer, el);
+  hostListeners.forEach((fn) => fn());
+  return () => {
+    if (pinnedHosts.get(layer) === el) pinnedHosts.delete(layer);
+    hostListeners.forEach((fn) => fn());
+  };
+}
+export const getPinnedHosts = () => new Map(pinnedHosts);
+
 // --- Redraw requests ------------------------------------------------------------------------
 // Canvases render on demand (nothing moves → no GPU work). Anything that could
 // move or restyle glass calls requestRender(); holdRender(ms) keeps frames coming
@@ -265,4 +310,8 @@ export const stats = {
   snapshots: 0,
   lastSnapshotMs: 0,
   lastSnapshotAt: 0,
+  belowHits: 0, // floating canvases: frames that re-used the "everything below" cache
+  belowMisses: 0, // … and frames that had to redraw it
+  canvasSyncMs: 0, // canvas mode: last frame's element-position sync
+  canvasPaintMs: 0, // … and drawing (page + glass)
 };

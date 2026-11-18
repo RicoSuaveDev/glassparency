@@ -287,7 +287,20 @@ function changed() {
 export const DEFAULT_MOBILE_QUERY = '(max-width: 860px)';
 
 /** Global switches (enabled, maxDpr, snapshot…), with safe defaults. */
+// getGlobal() only reads fileConfig, which is REPLACED (never mutated) on
+// every change — so its result is cached until fileConfig is a new object.
+// (It was rebuilt on every call: several times per frame, once per glass
+// element per frame.) Treat the returned object as read-only.
+let globalCache = null;
+let globalCacheFor = null;
 export function getGlobal() {
+  if (globalCacheFor !== fileConfig || !globalCache) {
+    globalCache = buildGlobal();
+    globalCacheFor = fileConfig;
+  }
+  return globalCache;
+}
+function buildGlobal() {
   const g = fileConfig.global || {};
   const s = g.snapshot || {};
   const z = g.zIndex || {};
@@ -342,16 +355,29 @@ export function getGlobal() {
     // element) | "full" (4 + caustic) | "lite" (1) | false (the site's own
     // CSS only, as before 1.3.6).
     cssGlass: g.cssGlass === false ? false : g.cssGlass === 'lite' || g.cssGlass === 'full' ? g.cssGlass : true,
-    // Where the page-wide canvases (base, float) sit:
-    //   "viewport" (default) — fixed to the window, redrawn as the page scrolls.
-    //   "page" — in the page itself, covering the visible part plus a margin,
-    //     and moved on each redraw. Phones and tablets scroll on their own
-    //     thread and only tell the page afterwards, so a window-fixed canvas
-    //     draws its glass a frame or more behind the content; a canvas in the
-    //     page scrolls WITH the content, so the glass stays glued to it.
-    //     Glass on fixed / sticky elements can't scroll with the page: in this
-    //     mode it keeps its CSS look (or is live, where live glass runs).
-    anchor: g.anchor === 'page' ? 'page' : 'viewport',
+    // Where the page-wide canvases (base, float, and the provider's own
+    // "top" host) sit:
+    //   "page" (default) — in the page itself, covering the visible part plus
+    //     a margin, and moved on each redraw. Every browser scrolls on its own
+    //     thread and only tells the page afterwards, so a window-fixed canvas
+    //     draws its glass a frame behind the content (buttons and tab bars
+    //     visibly trailed while scrolling); a canvas in the page scrolls WITH
+    //     the content, so the glass stays glued to it — like live glass.
+    //     Glass on fixed / sticky elements (a fixed header, an iOS-style tab
+    //     bar) is drawn by a separate window-fixed "pinned" canvas for its
+    //     layer, created only while such glass exists (registry.js).
+    //   "viewport" — the old way: all canvases fixed to the window.
+    anchor: g.anchor === 'viewport' ? 'viewport' : 'page',
+    // What floating WebGL glass refracts:
+    //   "snapshot" (default) — a picture of the page (snapshot.js), retaken
+    //     a moment after the page changes. Every browser.
+    //   "canvas" — the LIVE page: the page is rendered inside one canvas
+    //     (HTML-in-Canvas, Chromium 157+) that draws it and all the glass
+    //     every time anything changes (pageCanvas.js). Other browsers keep
+    //     "snapshot". Read once when <GlassProvider> mounts (the page moves
+    //     into / out of the canvas). Limits: other-origin images / iframes
+    //     without CORS draw blank; the page scrolls in its own box.
+    backdrop: g.backdrop === 'canvas' ? 'canvas' : 'snapshot',
     snapshot: {
       enabled: s.enabled !== false,
       debounceMs: clamp(num(s.debounceMs, 450), 50, 10000),
@@ -487,7 +513,49 @@ function mergeConfig(base, extra) {
  * @param {object} state   { hover, pressed, disabled } booleans
  * @returns validated, flattened props (no hover/pressed/disabled blocks)
  */
+// --- Resolve cache ----------------------------------------------------------------
+// resolveGlass merges 6 config layers and validates every SCHEMA key — it was
+// run again and again with the same inputs (each glass element on every
+// re-render, the animated controls every frame). The result only depends on:
+// group, the per-element props (by value), the hover / pressed / disabled
+// booleans, and the config "world" — fileConfig, overrides, forcedStates and
+// the theme, which are all REPLACED (never mutated) when they change. So
+// results are cached by (group, state, props-as-JSON) and the whole cache is
+// dropped the moment any part of the world is a new object. Callers must
+// treat the result as read-only (none of them write to it).
+const RESOLVE_CACHE_MAX = 2000;
+const resolveCache = new Map();
+let resolveWorld = { fileConfig: null, overrides: null, forcedStates: null, theme: null };
+function resolveCacheKey(group, props, state) {
+  let propsKey;
+  try {
+    propsKey = JSON.stringify(props || {});
+  } catch {
+    return null; // (not JSON-able, e.g. circular: don't cache)
+  }
+  const bits = `${state?.hover ? 1 : 0}${state?.pressed ? 1 : 0}${state?.disabled ? 1 : 0}`;
+  return `${group}\u0001${bits}\u0001${propsKey}`;
+}
 export function resolveGlass(group, props = {}, state = {}) {
+  const w = resolveWorld;
+  if (w.fileConfig !== fileConfig || w.overrides !== overrides || w.forcedStates !== forcedStates || w.theme !== theme) {
+    resolveCache.clear();
+    resolveWorld = { fileConfig, overrides, forcedStates, theme };
+  }
+  const key = resolveCacheKey(group, props, state);
+  if (key !== null) {
+    const hit = resolveCache.get(key);
+    if (hit) return hit;
+  }
+  const out = resolveGlassUncached(group, props, state);
+  if (key !== null) {
+    if (resolveCache.size >= RESOLVE_CACHE_MAX) resolveCache.clear();
+    resolveCache.set(key, out);
+  }
+  return out;
+}
+
+function resolveGlassUncached(group, props = {}, state = {}) {
   if (forcedStates[group]) state = { ...state, [forcedStates[group]]: true };
   const defaults = fileConfig.defaults || {};
   if (group && !fileConfig.groups?.[group]) warnOnce(`group:${group}`, `glass: unknown group "${group}" — using defaults`);

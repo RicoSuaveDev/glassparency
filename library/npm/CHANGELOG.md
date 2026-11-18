@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.4.0 — 2026-11-18
+
+- Fixed: Safari froze for 5–16 s on glass-heavy pages; page pictures now skip backdrop-filter frost (snapDOM copied the whole page once per CSS-glass pane), and WebGL glass takes over again.
+- Fixed: oversized crystal / frosted rims in Safari (the CSS fallback showed because WebGL glass never took over).
+- Fixed: glass on buttons and tab bars trailed its element while scrolling, in every browser.
+- Fixed: floating glass refracted the wrong part of a window-fixed (background-attachment: fixed) backdrop.
+- Fixed: automatic quality never stepped down in Safari (frames from several canvases were counted as extra frames).
+- Changed: global.anchor now defaults to "page" (canvases scroll with the page); glass on fixed / sticky elements gets its own window-fixed canvas. Set anchor: "viewport" for the old behaviour.
+- Changed: deeper tabBar preset (thickness 48, rimLight 0.7, innerGlow 0.24).
+- Changed: active tab bar / sidebar items get an accent glow + faint white halo; override with --gp-active-filter (none = off).
+- New (experimental, opt-in, Chromium 157+): global.backdrop "canvas" renders the page inside one canvas so glass refracts the live page every frame; images / iframes from other origins without CORS draw blank, and the page scrolls in its own box.
+- New: GLASS_CANVAS_BACKDROP_SUPPORTED; glassStats gains belowHits, belowMisses, canvasSyncMs, canvasPaintMs.
+- Performance: a prop change re-renders only that element; resolved settings are cached; fewer pointless redraws; floating canvases reuse a cached picture of the glass below them.
+- Performance: glass of any size is stretched from one mesh per corner shape instead of rebuilt per size; page pictures reuse their texture.
+
 ## 1.3.7 — 2026-11-08
 
 - Fixed: switches built from <input type="checkbox" data-glassparency-switch> in the script build (glassparency.standalone.js) showed an empty track with no knob in Safari and on phones. glass.css was being added after the page's controls were already built, so the CSS glass fallback measured the knob without its styles and collapsed it to 0×0. start() now adds glass.css before it upgrades any switches or sliders.

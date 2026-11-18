@@ -162,11 +162,14 @@ const toHex = (r, g, b) => `#${[r, g, b].map((n) => Math.round(Math.min(255, Mat
  */
 export const pageImageShader = /* glsl */ `
   uniform vec2 uSize;        // window size in CSS px
+  uniform vec2 uCanvas;      // this canvas's size in CSS px (= uSize when fixed to the window)
+  uniform float uTop;        // this canvas's top edge in window px (in-page canvases; else 0)
   uniform vec2 uImageSize;   // picture size in px
   uniform sampler2D uImage;
   varying vec2 vUv;
   void main() {
-    vec2 px = vec2(vUv.x, 1.0 - vUv.y) * uSize;            // y from the top, like CSS
+    // WINDOW px, y from the top like CSS (the picture is fixed to the window).
+    vec2 px = vec2(vUv.x, 1.0 - vUv.y) * uCanvas + vec2(0.0, uTop);
     float s = max(uSize.x / uImageSize.x, uSize.y / uImageSize.y); // cover
     vec2 drawn = uImageSize * s;
     vec2 iuv = (px - (uSize - drawn) * 0.5) / drawn;        // 0–1 across the picture, y from the top
@@ -192,10 +195,13 @@ export function pageBackgroundShader(spec) {
     .join('');
   return /* glsl */ `
     uniform vec2 uSize;   // window size in CSS px
+    uniform vec2 uCanvas; // this canvas's size in CSS px (= uSize when fixed to the window)
+    uniform float uTop;   // this canvas's top edge in window px (in-page canvases; else 0)
     varying vec2 vUv;
     void main() {
-      // CSS pixel position, y measured from the top like CSS.
-      vec2 px = vec2(vUv.x, 1.0 - vUv.y) * uSize;
+      // WINDOW pixel position, y measured from the top like CSS (the page
+      // background is fixed to the window, wherever this canvas is).
+      vec2 px = vec2(vUv.x, 1.0 - vUv.y) * uCanvas + vec2(0.0, uTop);
       vec3 col = mix(${v3(hex(PAGE_BASE.top))}, ${v3(hex(PAGE_BASE.bottom))}, px.y / max(uSize.y, 1.0));
       ${glows}
       gl_FragColor = vec4(col, 1.0);

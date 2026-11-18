@@ -135,7 +135,7 @@ function buildSlab({ w, h, r, bevel, depth, segments, profile }) {
   // corner) grew into a SQUARE slab — a light square frame round the rounded
   // tint/border. A core corner of CORE_RADIUS keeps the outer corner round
   // (radius r) and the rim practically as wide as configured.
-  const b = Math.max(0, Math.min(bevel, r > 0 ? Math.max(0, r - CORE_RADIUS) : bevel, w / 2 - 1, h / 2 - 1));
+  const b = bevelFor(w, h, r, bevel);
   const iw = Math.max(1, w - 2 * b);
   const ih = Math.max(1, h - 2 * b);
   // Clamped like the outline itself (see roundedRectShape) so the normals'
@@ -208,6 +208,65 @@ function buildFlat({ w, h, r }) {
   return geo;
 }
 
+// --- Stretched slabs (one template per corner shape) -------------------------------------
+/**
+ * The bevel's clamp for an outline of this size (see buildSlab) — the same
+ * expression, so a template and a fresh build agree on it.
+ */
+const bevelFor = (w, h, r, bevel) => Math.max(0, Math.min(bevel, r > 0 ? Math.max(0, r - CORE_RADIUS) : bevel, w / 2 - 1, h / 2 - 1));
+const templates = new Map(); // corner-shape key → { geo, w, h } (kept: a handful per page)
+/**
+ * A slab of any size WITHOUT re-extruding it: every outline ring of a slab
+ * (the cap, the bevel rings, the core) is a rounded rectangle with its corner
+ * arcs centred on the SAME four corner centres, joined by straight edges. So
+ * a slab built once at a small size (a 2 px straight edge on each side) turns
+ * into any bigger — or up to 2 px smaller — slab by sliding every vertex
+ * outward by half the size change (x by sign(x)·dx, y by sign(y)·dy): the
+ * corners move rigidly, only the straight edges and the flat cap stretch.
+ * The corners and their normals are exactly what a fresh ExtrudeGeometry
+ * of that size would make (normals are only flat or rotated with the
+ * corner); only the flat cap's triangulation differs, which can't be seen.
+ * Building a bevelled slab took ~3 ms (far more on a phone) per new size —
+ * the reason for GlassCanvas's old stretch-and-wait workaround; this is a
+ * copy of the vertex array.
+ * @returns {THREE.BufferGeometry|null} null → this size needs a fresh build
+ */
+function stretchedSlab({ w, h, r, bevel, depth, segments, profile }) {
+  const b = bevelFor(w, h, r, bevel);
+  // The template: straight edges of 2 px on every side (so the corner centres
+  // sit 1 px from the middle) — big enough for the same bevel clamp.
+  const w0 = 2 * Math.max(r, b + 1) + 2;
+  const h0 = w0;
+  if (w < w0 - 2 || h < h0 - 2) return null; // (smaller than the template can shrink to)
+  if (bevelFor(w0, h0, r, bevel) !== b) return null; // (the template would clamp the bevel differently)
+  const key = `${r}|${b}|${depth}|${segments}|${profile}`;
+  let t = templates.get(key);
+  if (!t) {
+    t = { geo: buildSlab({ w: w0, h: h0, r, bevel: b, depth, segments, profile }), w: w0, h: h0 };
+    templates.set(key, t);
+  }
+  const dx = (w - t.w) / 2;
+  const dy = (h - t.h) / 2;
+  const src = t.geo.attributes.position.array;
+  const pos = new Float32Array(src.length);
+  for (let i = 0; i < src.length; i += 3) {
+    const x = src[i];
+    const y = src[i + 1];
+    pos[i] = x + (x > 1e-4 ? dx : x < -1e-4 ? -dx : 0);
+    pos[i + 1] = y + (y > 1e-4 ? dy : y < -1e-4 ? -dy : 0);
+    pos[i + 2] = src[i + 2];
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  // (Own copies: three.js frees a geometry's GPU buffers attribute by
+  // attribute when it is disposed, so shared ones would vanish under others.)
+  geo.setAttribute('normal', new THREE.BufferAttribute(t.geo.attributes.normal.array.slice(), 3));
+  if (t.geo.index) geo.setIndex(new THREE.BufferAttribute(t.geo.index.array.slice(), 1));
+  for (const g of t.geo.groups) geo.addGroup(g.start, g.count, g.materialIndex);
+  geo.computeBoundingSphere();
+  return geo;
+}
+
 // --- Shared cache ------------------------------------------------------------------------
 const cache = new Map(); // key → { geo, users }
 const q = (n) => Math.round(n * 2) / 2; // half-pixel steps (fewer rebuilds)
@@ -228,7 +287,7 @@ export function acquireGeometry(kind, spec) {
       : `flat|${s.w}|${s.h}|${s.r}`;
   let hit = cache.get(key);
   if (!hit) {
-    hit = { geo: kind === 'slab' ? buildSlab(s) : buildFlat(s), users: 0 };
+    hit = { geo: kind === 'slab' ? stretchedSlab(s) || buildSlab(s) : buildFlat(s), users: 0 };
     cache.set(key, hit);
   }
   hit.users += 1;

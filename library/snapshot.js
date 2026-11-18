@@ -210,8 +210,11 @@ let warnedNodeMap = false;
  * floating glass) showed the page's text ~20 px above where it really is,
  * e.g. button labels sitting on the top edge of their (WebGL-drawn) pills.
  *
- * ctx.nodeMap (copy → original element) is snapDOM-internal (3.2.0); if a
+ * ctx.nodeMap (copy → original element) is snapDOM-internal (3.2.0+); if a
  * future version drops it, nothing is hidden and we warn once.
+ *
+ * It also leaves window-fixed backgrounds and backdrop-filter frost out of
+ * the picture (see the loop below for why).
  */
 const hideLeftOut = {
   name: 'dp-glass-hide-left-out',
@@ -223,7 +226,41 @@ const hideLeftOut = {
       return;
     }
     for (const [copy, original] of map) {
-      if (original?.nodeType === 1 && copy?.style && leftOut(original)) copy.style.setProperty('opacity', '0', 'important');
+      if (original?.nodeType !== 1 || !copy?.style) continue;
+      if (leftOut(original)) {
+        copy.style.setProperty('opacity', '0', 'important');
+        continue;
+      }
+      // A WINDOW-FIXED background (background-attachment: fixed — a page
+      // backdrop photo or gradient) can't be photographed: snapDOM paints it
+      // once, at some spot of the picture, which then slides with the page.
+      // Floating glass refracted the backdrop at the wrong place (the lake
+      // where the mountains are) with flat colour around it. The WebGL
+      // background pass already draws the window-fixed backdrop exactly
+      // (global.background / backgroundImage), so it's left out of the
+      // picture and the picture stays transparent there.
+      const cs = getComputedStyle(original);
+      if (/\bfixed\b/.test(cs.backgroundAttachment)) {
+        copy.style.setProperty('background', 'none', 'important');
+      }
+      // backdrop-filter: snapDOM (3.7+) imitates it by copying EVERYTHING
+      // behind the element into the picture once per element that has one —
+      // and every CSS-glass pane (cssGlass.js) has one. Measured in Safari on
+      // the UI lab: one column (551 elements) became 10,755 (44 extra copies
+      // of the column); the whole page became a 400 MB SVG that took 11–16 s
+      // to build (the page frozen) and that Safari then failed to decode —
+      // so floating WebGL glass never got its picture and kept retrying.
+      // The picture is only ever seen THROUGH glass (blurred, bent), so the
+      // frost of these panes isn't needed in it: switch it off in the copy
+      // and drop the copy from ctx.nodeMap — snapDOM finds the elements to
+      // imitate through that map (by their original's computed style), so it
+      // skips them. (Their styles are already inlined by this point.)
+      const bf = cs.backdropFilter || cs.webkitBackdropFilter;
+      if (bf && bf !== 'none') {
+        copy.style.setProperty('backdrop-filter', 'none', 'important');
+        copy.style.setProperty('-webkit-backdrop-filter', 'none', 'important');
+        map.delete(copy);
+      }
     }
   },
 };

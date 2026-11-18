@@ -118,11 +118,14 @@ function setAutoLevel(next, fps, why) {
 /**
  * Called by every glass canvas once per drawn frame (frames of several
  * canvases in the same animation frame count once).
- * @param {number} now - performance.now()
+ * @param {number} now - the animation frame's timestamp (document.timeline.currentTime;
+ *   performance.now() where that isn't available)
  */
 export function noteFrame(now) {
   const dt = now - lastFrameAt;
-  if (dt < 2) return; // another canvas, same frame
+  // Another canvas in the same animation frame (now = the frame's
+  // timestamp, so dt is 0 for it). Also ignores time going backwards.
+  if (dt < 2) return;
   lastFrameAt = now;
   if (getGlobal().quality !== 'auto') return;
   if (typeof document !== 'undefined' && document.hidden) return resetWindow();

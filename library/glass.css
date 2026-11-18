@@ -584,6 +584,16 @@ html[data-glass='on'] [data-glass-active][data-glass-icon-size] svg {
 }
 :where([data-gp-wipe='accent']) {
   color: var(--gp-accent, #0a84ff);
+  /* The active tab / sidebar item (icon + label, inside the lens) stands out
+     from the glass behind it: a tight glow in its own colour, then a faint,
+     wider WHITE halo round it (a light "shadow" — a dark one muddied it).
+     drop-shadow (not text-shadow) so SVG icons get it too.
+     --gp-active-filter replaces it (none = off). */
+  filter: var(
+    --gp-active-filter,
+    drop-shadow(0 0 3px color-mix(in srgb, var(--gp-accent, #0a84ff) 75%, transparent))
+      drop-shadow(0 0 6px rgb(255 255 255 / 0.35))
+  );
 }
 /* Lifted lens: above the items, so live glass bends the icons too. */
 :where([data-gp-lens][data-gp-lifted]) {
@@ -636,4 +646,13 @@ html[data-glass='on'] [data-glass-active][data-glass-icon-size] svg {
 }
 :where(glass-ui[hidden]) {
   display: none;
+}
+
+/* Canvas mode (global.backdrop "canvas", pageCanvas.js): the page is rendered
+   inside a window-sized canvas and scrolls in its own box — the window
+   itself must not scroll (nor show a second scroll bar). */
+html[data-glass-canvas],
+html[data-glass-canvas] body {
+  overflow: hidden !important;
+  height: 100%;
 }

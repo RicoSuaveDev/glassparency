@@ -135,6 +135,16 @@ export interface GlassGlobal {
   theme?: 'auto' | 'light' | 'dark';
   /** Where the page-wide canvases sit: "viewport" (fixed, default) or "page" (scrolls with the page: no lag on phones). */
   anchor?: 'viewport' | 'page';
+  /**
+   * What floating WebGL glass refracts. "snapshot" (default): a picture of the
+   * page, retaken a moment after it changes. "canvas": the LIVE page — the
+   * page is rendered inside one canvas (HTML-in-Canvas, Chromium 157+) that
+   * draws it and all the glass every time anything changes; other browsers
+   * keep "snapshot". Read once when <GlassProvider> mounts. Limits: images /
+   * iframes from other origins without CORS draw blank; the page scrolls in
+   * its own box instead of the window.
+   */
+  backdrop?: 'snapshot' | 'canvas';
   maxDpr?: number;
   bufferScale?: number;
   /** "auto" (default) = full quality, throttled only while animation is too slow; or a fixed level. */
@@ -502,6 +512,8 @@ export declare const GLASS_SCHEMA: Record<string, { type: string; label: string;
 export declare const GLASS_LAYERS: GlassLayer[];
 export declare const GLASS_STATE_KEYS: Array<'hover' | 'pressed' | 'disabled'>;
 export declare const GLASS_LIVE_SUPPORTED: boolean;
+/** Can this browser run global.backdrop "canvas" (HTML-in-Canvas, Chromium 157+)? */
+export declare const GLASS_CANVAS_BACKDROP_SUPPORTED: boolean;
 export declare function getGlassGlobal(): Required<Omit<GlassGlobal, 'zIndex' | 'snapshot'>> & {
   zIndex: { base: number; float: number; top: number };
   snapshot: Required<NonNullable<GlassGlobal['snapshot']>>;
@@ -521,7 +533,19 @@ export declare function subscribeGlassConfig(fn: (version: number) => void): () 
 export type GlassStatus = { state: 'off' | 'loading' | 'on' | 'fallback'; reason: string };
 export declare function getGlassStatus(): GlassStatus;
 export declare function subscribeGlassStatus(fn: (status: GlassStatus) => void): () => void;
-export declare const glassStats: { frames: number; lastFrameMs: number; snapshots: number; lastSnapshotMs: number; lastSnapshotAt: number };
+export declare const glassStats: {
+  frames: number;
+  lastFrameMs: number;
+  snapshots: number;
+  lastSnapshotMs: number;
+  lastSnapshotAt: number;
+  /** Floating canvases: frames that re-used the "everything below" cache / that redrew it. */
+  belowHits: number;
+  belowMisses: number;
+  /** Canvas mode: last frame's element-position sync and drawing (ms). */
+  canvasSyncMs: number;
+  canvasPaintMs: number;
+};
 export declare function glassLiveCount(): number;
 /** Automatic quality: the level in use, whether it's automatic, and the fps it last measured while animating. */
 export type GlassQuality = { level: 'high' | 'medium' | 'low'; auto: boolean; fps: number };

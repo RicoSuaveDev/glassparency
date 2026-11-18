@@ -36,7 +36,7 @@
  */
 import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useSyncExternalStore } from 'react';
 import * as THREE from 'three';
-import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { Canvas, advance, createRoot, extend, useFrame, useThree } from '@react-three/fiber';
 import { MeshTransmissionMaterial } from '@react-three/drei';
 import { easing } from 'maath';
 import { getGlassTheme, getGlobal, glassRoot, resolveGlass, subscribeConfig } from './config';
@@ -44,11 +44,13 @@ import {
   addRenderer,
   allEntries,
   getHosts,
+  getPinnedHosts,
   isCoveredHost,
   isHolding,
   layerIndex,
   placement,
   requestRender,
+  setPinned,
   stats,
   subscribeHosts,
   subscribeProps,
@@ -59,18 +61,27 @@ import { createTextSampler } from './autoText';
 import { bufferScaleFactor, dprCap, getQualityIndex, noteFrame, samplesCap, subscribeGlassQuality } from './quality';
 import { acquireGeometry, outline } from './shapes';
 import { MAX_RIPPLES, activeRipples } from './ripple';
+import { drawInfo, drawableElements, getPage, needsRecopy, requestPagePaint, setPageRenderer } from './pageCanvas';
 
 /** Scratch vector: a ripple's centre, projected to buffer uv each frame. */
 const rippleAt = new THREE.Vector3();
+// Clipping-plane normals (shared, read-only) and the default pointer, so the
+// per-element frame doesn't allocate them every frame.
+const PLANE_X_POS = new THREE.Vector3(1, 0, 0);
+const PLANE_X_NEG = new THREE.Vector3(-1, 0, 0);
+const PLANE_Y_NEG = new THREE.Vector3(0, -1, 0);
+const PLANE_Y_POS = new THREE.Vector3(0, 1, 0);
+const CENTER_POINTER = Object.freeze({ x: 0.5, y: 0.5 });
 
 const MAX_LIQUID = 16; // shapes per morph group
 const UNIT_PLANE = new THREE.PlaneGeometry(1, 1); // shared by every shadow layer
-// Animating sizes reuse the current slab mesh, stretched, for changes up to
-// this fraction of its size; the exact mesh is built once the size has held
-// still this long (see the geometry block in the slab's frame).
-const GEO_SLACK = 0.08;
-const GEO_SETTLE_MS = 120;
 import { backgroundFor, fullscreenVertexShader, isImageBackdrop, pageBackgroundShader, pageImageShader, setImageBackdrop } from './pageBackground';
+
+/** This animation frame's timestamp (shared by all canvases drawn in it). */
+const frameTime = (fallback) => {
+  const t = typeof document !== 'undefined' ? document.timeline?.currentTime : null;
+  return typeof t === 'number' && Number.isFinite(t) ? t : fallback;
+};
 
 const CAMERA_Z = 100000; // far away → view direction is straight down everywhere
 // global.anchor "page": the canvas covers the visible part of the page plus
@@ -83,8 +94,11 @@ const channelOf = (layer, tier) => 1 + layerIndex(layer) * 6 + tier; // three.js
  * Mount point used by GlassProvider. `layer` = "base" | "float" | "modal" | "top".
  * `layers` (optional): draw only glass on these layers — the mobile-layout
  * exceptions (global.mobileLayers), where every other layer is CSS glass.
+ * `pinned` (optional): this is the layer's window-fixed "pinned" canvas
+ * (anchor "page"): it draws only the layer's glass on fixed / sticky
+ * elements; the layer's in-page canvas draws the rest (registry.js).
  */
-export default function GlassCanvas({ layer, layers, onLost, onReady }) {
+export default function GlassCanvas({ layer, layers, pinned = false, onLost, onReady }) {
   const g = getGlobal();
   // Automatic quality (quality.js): re-render when the level changes.
   useSyncExternalStore(subscribeGlassQuality, getQualityIndex, getQualityIndex);
@@ -117,15 +131,78 @@ export default function GlassCanvas({ layer, layers, onLost, onReady }) {
       }}
       aria-hidden="true"
     >
-      <GlassWorld layer={layer} layers={layers} onReady={onReady} />
+      <GlassWorld layer={layer} layers={layers} pinned={pinned} onReady={onReady} />
     </Canvas>
   );
 }
 
 // =============================================================================
+// PageGlass — canvas mode (global.backdrop "canvas"): the page canvas itself
+// =============================================================================
+/**
+ * Turns the page canvas (pageCanvas.js — the page is rendered inside it)
+ * into a react-three-fiber root that draws EVERYTHING: GlassWorld in its
+ * "single" mode. It runs inside the canvas's paint event (frameloop
+ * "never" + advance()), which fires whenever the page or a glass element
+ * changes — so the page and the glass refracting it are always the same
+ * frame. Redraw requests (hover easing, requestRender) ask for a paint.
+ */
+export function PageGlass({ onLost, onReady }) {
+  useEffect(() => {
+    const page = getPage();
+    if (!page) return undefined;
+    extend(THREE); // (createRoot, unlike <Canvas>, doesn't register three.js's classes)
+    const { canvas } = page;
+    const renderer = new THREE.WebGLRenderer({ canvas, context: page.gl, alpha: true, antialias: true, premultipliedAlpha: true });
+    renderer.localClippingEnabled = true; // glass inside scroll boxes is clipped to them
+    renderer.setClearColor(0x000000, 0);
+    // react-three-fiber force-loses the WebGL context of a renderer it
+    // releases — even one it didn't make. This context is the PAGE's (it
+    // keeps drawing the page after the glass stops), so not this one.
+    renderer.forceContextLoss = () => {};
+    const root = createRoot(canvas);
+    const sizeNow = () => ({ width: canvas.clientWidth, height: canvas.clientHeight, top: 0, left: 0 });
+    const changed = { current: null }; // the paint event's changed elements
+    let disposed = false;
+    const onContextLost = () => onLost?.('The graphics card reset (WebGL context lost)');
+    canvas.addEventListener('webglcontextlost', onContextLost);
+    const offRenderer = addRenderer(() => requestPagePaint());
+    root
+      .configure({ gl: renderer, size: sizeNow(), dpr: window.devicePixelRatio || 1, frameloop: 'never', flat: true, linear: true, events: undefined })
+      .then(() => {
+        if (disposed) return;
+        const store = root.render(<GlassWorld layer="base" single={{ root: page.root, changed }} onReady={onReady} />);
+        // Anything that asks this root for a frame gets a paint instead.
+        store.setState({ invalidate: () => requestPagePaint() });
+        setPageRenderer({
+          paint(ev) {
+            changed.current = ev?.changedElements ? new Set(ev.changedElements) : null;
+            advance(performance.now(), true, store.getState());
+          },
+          resize() {
+            root.configure({ size: sizeNow(), dpr: window.devicePixelRatio || 1 });
+          },
+        });
+      })
+      .catch((err) => onLost?.(`The glass could not start in the page canvas (${err?.message || err})`));
+    return () => {
+      disposed = true;
+      offRenderer();
+      canvas.removeEventListener('webglcontextlost', onContextLost);
+      setPageRenderer(null); // the built-in painter draws the page again
+      root.unmount();
+    };
+  }, [onLost, onReady]);
+  return null;
+}
+
+// =============================================================================
 // GlassWorld — the render loop for one layer
 // =============================================================================
-function GlassWorld({ layer, layers, onReady }) {
+function GlassWorld({ layer, layers, pinned, onReady, single = null }) {
+  // single = { root, changed }: CANVAS MODE (pageCanvas.js) — this world is
+  // the page canvas itself and draws everything in it: background, every
+  // layer's glass, the live page and the floating glass's own HTML.
   const { gl, size, scene, invalidate, viewport } = useThree();
   const myIndex = layerIndex(layer);
   const controllers = useRef(new Map()); // entry id → controller (from GlassMesh)
@@ -134,7 +211,7 @@ function GlassWorld({ layer, layers, onReady }) {
   // Redraw on request from anywhere (scroll, hover, config change…).
   useEffect(() => addRenderer(() => invalidate()), [invalidate]);
   // The floating layers read the page snapshot; start watching the page.
-  useEffect(() => (myIndex > 0 ? startSnapshots() : undefined), [myIndex]);
+  useEffect(() => (myIndex > 0 && !single ? startSnapshots() : undefined), [myIndex, single]);
 
   // Which elements this canvas needs: its own layer's and every layer below
   // (those are drawn into the buffers only, so this layer can refract them).
@@ -142,7 +219,13 @@ function GlassWorld({ layer, layers, onReady }) {
   useEffect(() => subscribeStructure(rerender), []);
   useEffect(() => subscribeHosts(rerender), []);
   const hosts = getHosts();
+  // This canvas's own container, and whether it sits IN the page (anchor
+  // "page": it scrolls with the content, so glass can't trail behind it) or
+  // is fixed to the window. A pinned canvas is always window-fixed.
+  const myHost = pinned ? getPinnedHosts().get(layer) : hosts.get(layer);
+  const pageMode = !single && !pinned && myHost?.dataset.glassAnchor === 'page';
   const entries = allEntries().filter((e) => {
+    if (single) return single.root.contains(e.el);
     const p = placement(e.id);
     const idx = layerIndex(p.layer);
     return idx <= myIndex && hosts.has(p.layer) && (!layers || layers.includes(p.layer));
@@ -191,9 +274,12 @@ function GlassWorld({ layer, layers, onReady }) {
   // --- Buffers (ping-pong) + helper scenes ------------------------------------------------
   // Only the full base canvas paints the background picture (and tells
   // live.js so) — not a mobile-exception canvas drawing just its own layers.
-  const fullBase = layer === 'base' && !layers;
+  const fullBase = layer === 'base' && !layers && !pinned;
   const kit = useMemo(() => makeKit(fullBase), [fullBase]);
   useEffect(() => () => kit.dispose(), [kit]);
+  // Canvas mode: the live page + floating glass HTML as textured rectangles.
+  const elems = useMemo(() => (single ? makeElementLayer(gl) : null), [single, gl]);
+  useEffect(() => () => elems?.dispose(), [elems]);
   // textColor "auto": reads back what auto-text glass refracts (autoText.js).
   const textSampler = useMemo(() => createTextSampler(gl, invalidate), [gl, invalidate]);
   useEffect(() => () => textSampler.dispose(), [textSampler]);
@@ -212,12 +298,17 @@ function GlassWorld({ layer, layers, onReady }) {
   );
   // (× the automatic-quality factor: 1 unless frames were too slow)
   useSyncExternalStore(subscribeGlassQuality, getQualityIndex, getQualityIndex);
+  // (Canvas mode draws the page itself at the FULL pixel density — crisp
+  // text — but keeps the glass buffers at the usual capped density.)
+  const bufDpr = single ? Math.min(viewport.dpr, dprCap(getGlobal().maxDpr)) : viewport.dpr;
   const bufScale = getGlobal().bufferScale * bufferScaleFactor();
-  const bw = Math.max(1, Math.round(size.width * viewport.dpr * bufScale));
-  const bh = Math.max(1, Math.round(size.height * viewport.dpr * bufScale));
+  const bw = Math.max(1, Math.round(size.width * bufDpr * bufScale));
+  const bh = Math.max(1, Math.round(size.height * bufDpr * bufScale));
   useLayoutEffect(() => {
     kit.bufA.setSize(bw, bh);
     kit.bufB.setSize(bw, bh);
+    kit.below.rt.setSize(bw, bh);
+    kit.below.sig = null; // (its picture is the old size)
     kit.bgMat.uniforms.uSize.value.set(size.width, size.height);
     requestRender();
   }, [kit, bw, bh, size]);
@@ -225,13 +316,29 @@ function GlassWorld({ layer, layers, onReady }) {
   // --- The frame -------------------------------------------------------------------------
   useFrame(() => {
     const t0 = performance.now();
-    noteFrame(t0); // automatic quality: how fast frames come while animating
+    // Automatic quality: how fast frames come while animating. Timed by the
+    // ANIMATION FRAME (document.timeline.currentTime — the same value for
+    // every canvas drawn in one refresh), not by when this canvas happened
+    // to start: with performance.now(), the 2nd and 3rd canvas of one
+    // refresh started a few ms after the 1st and were counted as extra,
+    // very fast frames — Safari showed "333 fps" while struggling, and auto
+    // quality never stepped down.
+    noteFrame(frameTime(t0));
     // global.anchor "page": move the canvas round the visible part of the page
     // and aim the camera at where it really is. Between redraws the browser
     // scrolls the canvas WITH the page, so the glass never trails the content
     // (a window-fixed canvas is always redrawn a frame or more late on phones).
     let viewTop = 0; // world y of the canvas's top edge (0 = top of the window)
-    if (pageAnchored(layer)) viewTop = placePageCanvas(gl.domElement, getHosts().get(layer), camera);
+    if (pageMode) viewTop = placePageCanvas(gl.domElement, myHost, camera);
+    else if (camera.top !== 0 || camera.bottom !== -size.height || camera.right !== size.width) {
+      // Window-fixed (again — e.g. anchor switched back from "page"): aim
+      // the camera at the window, as the size effect above does.
+      camera.left = 0;
+      camera.right = size.width;
+      camera.top = 0;
+      camera.bottom = -size.height;
+      camera.updateProjectionMatrix();
+    }
     let animating = false;
     const visible = [];
     // Background "auto" over a gradient / image page background: WebGL base
@@ -240,7 +347,22 @@ function GlassWorld({ layer, layers, onReady }) {
     // look. (In Chromium base glass is live there anyway — see live.js.)
     // Not once global.backgroundImage is painted here: then WebGL base glass
     // refracts the real picture (kit.backgroundIsImage() turns false).
-    kit.syncTheme();
+    // Background: an in-page canvas is taller than the window and moves, but
+    // the page background is fixed to the WINDOW — so its shader draws in
+    // window coordinates (uSize = window, uCanvas + uTop = where this canvas
+    // is). A window-fixed canvas IS the window (uTop 0).
+    {
+      const bu = kit.bgMat.uniforms;
+      if (pageMode) bu.uSize.value.set(window.innerWidth, window.innerHeight);
+      else bu.uSize.value.set(size.width, size.height);
+      bu.uCanvas.value.set(size.width, size.height);
+      bu.uTop.value = pageMode ? -viewTop : 0;
+    }
+    // Paint the background on screen only from the window-fixed full base
+    // canvas: from an in-page canvas a window-fixed picture would scroll
+    // with the page between redraws (the site's own CSS background shows
+    // through instead — the buffer still has the exact copy to refract).
+    kit.syncTheme(!pageMode && !pinned);
     const baseBlocked = kit.backgroundIsImage();
     for (const c of controllers.current.values()) {
       if (c.animating) animating = true;
@@ -326,6 +448,40 @@ function GlassWorld({ layer, layers, onReady }) {
       }
       passes.push(s);
     }
+    // Canvas mode: the live page goes where the page picture would (on top
+    // of the base glass, under the floating glass), and a floating LAYER's
+    // own HTML right after its last stratum — above all of that layer's
+    // glass, like the normal mode (where all HTML sits over the layer's
+    // canvas: a tab bar's icons over its lens). Floating glass that isn't
+    // drawn this frame (switched off, hidden, scrolled out) still needs its
+    // HTML: the last "labels" pass draws whatever wasn't.
+    if (single) {
+      const out = [];
+      let pageDone = false;
+      let pending = null; // { layer, ctls } — labels of the layer being drawn
+      const flush = () => {
+        if (pending) out.push({ type: 'labels', ctls: pending.ctls });
+        pending = null;
+      };
+      for (const ps of passes) {
+        if (!pageDone && ps.type === 'glass' && layerIndex(ps.layer) > 0) {
+          out.push({ type: 'page' });
+          pageDone = true;
+        }
+        if (pending && ps.layer !== pending.layer) flush();
+        out.push(ps);
+        if (ps.type === 'glass' && layerIndex(ps.layer) > 0) {
+          pending ||= { layer: ps.layer, ctls: [] };
+          pending.ctls.push(...ps.ctls);
+        }
+      }
+      flush();
+      if (!pageDone) out.push({ type: 'page' });
+      out.push({ type: 'labels', rest: true });
+      passes.length = 0;
+      passes.push(...out);
+      elems.begin(size, single.changed.current);
+    }
 
     gl.autoClear = false;
     // (kit.syncTheme() ran at the top of the frame: light / dark mode or the
@@ -334,9 +490,35 @@ function GlassWorld({ layer, layers, onReady }) {
     // an exact copy of the page's CSS background, or the background picture
     // once loaded — "auto" otherwise leaves the site's real background
     // visible; see pageBackground.js).
-    gl.setRenderTarget(kit.bufA);
-    gl.clear();
-    gl.render(kit.bgScene, kit.quadCam);
+    const lodScale = bufDpr * bufScale;
+
+    // --- "Everything below" cache ------------------------------------------
+    // A floating / top / dialog canvas first redraws everything under its
+    // own glass into the buffers — the background, the base (and float…)
+    // glass, the page picture, the dialog dimmer — every frame, though that
+    // usually hasn't changed (hovering a header button, dragging a tab bar
+    // lens, a switch knob springing). So the result is kept (kit.below) with
+    // a fingerprint of all of it (belowSignature: positions, sizes, shapes,
+    // eased values, settings, background, picture, scroll); while the
+    // fingerprint matches, one copy replaces all those passes. It is only
+    // stored once the content below has held still for a frame, so a
+    // continuous change (scrolling) costs nothing extra.
+    const own0 = myIndex > 0 ? passes.findIndex((ps) => ps.type === 'glass' && ps.layer === layer) : -1;
+    const belowSig = own0 > 0 ? belowSignature(passes, own0, kit, { size, viewTop, lodScale, layer }) : null;
+    const belowHit = belowSig !== null && kit.below.sig === belowSig;
+    const storeBelow = belowSig !== null && !belowHit && kit.below.lastSig === belowSig;
+    if (own0 > 0) {
+      kit.below.lastSig = belowSig;
+      if (belowHit) stats.belowHits += 1;
+      else stats.belowMisses += 1;
+    }
+
+    if (belowHit) kit.blit(gl, kit.below.rt, kit.bufA);
+    else {
+      gl.setRenderTarget(kit.bufA);
+      gl.clear();
+      gl.render(kit.bgScene, kit.quadCam);
+    }
     gl.setRenderTarget(null);
     gl.clear();
     if (myIndex === 0 && kit.paintBackground()) gl.render(kit.bgScene, kit.quadCam);
@@ -344,11 +526,36 @@ function GlassWorld({ layer, layers, onReady }) {
     let src = kit.bufA;
     let dst = kit.bufB;
     const sampleText = textSampler.begin(); // (throttled; only with auto-text glass)
-    const lodScale = viewport.dpr * bufScale;
     let pictureReady = false; // floating layers: is the page picture in this frame?
+    // (A cache hit skips the picture pass — it's in the cached buffer.)
+    if (belowHit && passes.slice(0, own0).some((ps) => ps.type === 'snapshot')) pictureReady = Boolean(snapshot.canvas);
     const shown = []; // controllers drawn to THIS canvas's screen this frame
+    // (The buffer only matters while glass is still to come — it's what that
+    // glass refracts. Canvas mode ends with label passes nothing reads.)
+    let lastGlass = -1;
+    passes.forEach((ps, i) => {
+      if (ps.type === 'glass') lastGlass = i;
+    });
     passes.forEach((pass, i) => {
-      const last = i === passes.length - 1;
+      if (belowHit && i < own0) return; // (in the cached buffer)
+      if (storeBelow && i === own0) {
+        kit.blit(gl, src, kit.below.rt);
+        kit.below.sig = belowSig;
+      }
+      const last = i === passes.length - 1 || (single && i >= lastGlass);
+      if (pass.type === 'page' || pass.type === 'labels') {
+        // Canvas mode: the live page / floating glass HTML (premultiplied).
+        if (!(pass.type === 'page' ? elems.preparePage(single.root) : elems.prepareLabels(pass))) return;
+        camera.layers.set(0);
+        if (!last) {
+          kit.blit(gl, src, dst);
+          gl.render(elems.scene, camera);
+        }
+        gl.setRenderTarget(null);
+        gl.render(elems.scene, camera);
+        if (!last) [src, dst] = [dst, src];
+        return;
+      }
       if (pass.type === 'snapshot' || pass.type === 'underlay') {
         const ready = pass.type === 'snapshot' ? kit.updateSnapshot() : kit.updateUnderlay(layer);
         if (pass.type === 'snapshot') pictureReady = ready;
@@ -362,7 +569,7 @@ function GlassWorld({ layer, layers, onReady }) {
       for (const c of pass.ctls) c.setBuffer(src.texture, lodScale);
       // Auto text: queue a read of exactly what this stratum refracts (only
       // for glass this canvas draws — lower layers are sampled by theirs).
-      if (sampleText && pass.layer === layer) {
+      if (sampleText && (single || pass.layer === layer)) {
         const items = [];
         for (const c of pass.ctls) for (const m of c.members || [c]) if (m.p?.textColor === 'auto' && m.entry) items.push({ el: m.entry.el, p: m.p });
         if (items.length) textSampler.read(src, items);
@@ -373,7 +580,7 @@ function GlassWorld({ layer, layers, onReady }) {
         kit.blit(gl, src, dst);
         gl.render(scene, camera);
       }
-      if (pass.layer === layer) {
+      if (single || pass.layer === layer) {
         gl.setRenderTarget(null);
         gl.render(scene, camera);
         shown.push(...pass.ctls);
@@ -409,16 +616,18 @@ function GlassWorld({ layer, layers, onReady }) {
     stats.frames += 1;
     stats.lastFrameMs = Math.round((performance.now() - t0) * 10) / 10;
     // Keep going while something is easing or a CSS animation is moving things.
-    if (animating || isHolding()) invalidate();
+    if (animating || isHolding() || elems?.retry) invalidate();
   }, 2);
 
-  return entries.map((e) => <GlassMesh key={e.id} entry={e} controllers={controllers} sharedTexture={kit.bufA.texture} />);
+  return entries.map((e) => (
+    <GlassMesh key={e.id} entry={e} controllers={controllers} sharedTexture={kit.bufA.texture} canvasLayer={single ? null : layer} pageMode={pageMode} pinnedCanvas={pinned} />
+  ));
 }
 
 // =============================================================================
 // GlassMesh — one element's glass slab + tint layer
 // =============================================================================
-function GlassMesh({ entry, controllers, sharedTexture }) {
+function GlassMesh({ entry, controllers, sharedTexture, canvasLayer, pageMode, pinnedCanvas }) {
   const group = useRef();
   const slab = useRef();
   const tint = useRef();
@@ -427,7 +636,19 @@ function GlassMesh({ entry, controllers, sharedTexture }) {
 
   // Props: re-resolve when config / element props / hover state change.
   const [, rerender] = useReducer((n) => n + 1, 0);
-  useEffect(() => subscribeProps(rerender), []);
+  // Only re-render for THIS element's changes (or a page-wide one: id
+  // undefined = config / theme changed). Before, every glass element
+  // re-rendered whenever ANY element's props changed — and the animated
+  // controls (switch, slider, tab lens…) set props every frame, so one
+  // toggling switch re-rendered (and re-resolved) all the page's glass
+  // every frame.
+  useEffect(
+    () =>
+      subscribeProps((id) => {
+        if (id === undefined || id === entry.id) rerender();
+      }),
+    [entry.id]
+  );
   const resolved = resolveGlass(entry.group, entry.props, entry.state);
   // Automatic quality caps the refraction samples (a new shader per level).
   useSyncExternalStore(subscribeGlassQuality, getQualityIndex, getQualityIndex);
@@ -437,8 +658,20 @@ function GlassMesh({ entry, controllers, sharedTexture }) {
   const tintFrom = colorOf(p.tint.from, entry.el);
   const tintVia = colorOf(p.tint.via || p.tint.from, entry.el);
   const tintTo = colorOf(p.tint.to, entry.el);
+  // Border + shadow colours: read here (on re-render) like the tint, not in
+  // the frame loop — a "var(--x)" colour there meant a getComputedStyle per
+  // element on every frame. (Re-rendered on config / theme / own prop
+  // changes, the same moments the tint colours are re-read.)
+  const borderRgb = colorOf(p.borderColor || '#ffffff', entry.el);
+  const shadowRgb = colorOf(p.shadowColor || '#1e1b4b', entry.el);
   const place = placement(entry.id);
   const channel = channelOf(place.layer, place.tier);
+  // Canvas mode: match the LIVE (SVG) glass look — deeper rim bend, live
+  // rim lighting, live minify (liveBendMatch, liveLight, glassLiveMinify) —
+  // for the glass that Chromium draws live in the normal mode: the float
+  // layer (knobs included). Not for top / base glass (a tab bar, buttons —
+  // WebGL in both modes, so the same look in both).
+  const liveMatch = canvasLayer === null && place.layer === 'float';
 
   // Tint layer shader (gradient + opacity), one per element.
   const planes = useMemo(() => [0, 1, 2, 3].map(() => new THREE.Plane()), []);
@@ -475,6 +708,7 @@ function GlassMesh({ entry, controllers, sharedTexture }) {
   const ctl = useRef(null);
   if (!ctl.current) {
     ctl.current = {
+      planes, // (canvas mode: the element's HTML is clipped like its glass)
       id: entry.id,
       visible: false,
       animating: false,
@@ -497,6 +731,7 @@ function GlassMesh({ entry, controllers, sharedTexture }) {
     };
   }
   const c = ctl.current;
+  if (c.p !== p) c.pv = (c.pv || 0) + 1; // (settings version, for the "below" fingerprint)
   c.p = p;
   c.layer = place.layer;
   c.channel = channel;
@@ -506,6 +741,8 @@ function GlassMesh({ entry, controllers, sharedTexture }) {
     controllers.current.set(entry.id, c);
     return () => {
       controllers.current.delete(entry.id);
+      if (c.reportedPinned) setPinned(entry.id, c.layer, false);
+      c.reportedPinned = false;
       c.slabGeo?.release();
       c.flatGeo?.release();
     };
@@ -517,6 +754,22 @@ function GlassMesh({ entry, controllers, sharedTexture }) {
     patchMaterial(mat.current, p.samples);
     invalidate();
   }, [p.samples, invalidate]);
+  // The size in px of what the slab is being drawn into (a buffer or the
+  // screen — it's drawn into both), for the live-minify shader (glassTargetPx).
+  useLayoutEffect(() => {
+    const m = slab.current;
+    if (!m) return undefined;
+    m.onBeforeRender = (renderer) => {
+      const t = mat.current?.uniforms?.glassTargetPx?.value;
+      if (!t) return;
+      const rt = renderer.getRenderTarget();
+      if (rt) t.set(rt.width, rt.height);
+      else renderer.getDrawingBufferSize(t);
+    };
+    return () => {
+      m.onBeforeRender = () => {};
+    };
+  }, []);
 
   // --- Per-frame: follow the element --------------------------------------------------
   useFrame((_state, frameDelta) => {
@@ -524,6 +777,7 @@ function GlassMesh({ entry, controllers, sharedTexture }) {
     const delta = Math.min(frameDelta, 1 / 30);
     const el = entry.el;
     const g = group.current;
+    c.sig = null; // ("below" fingerprint — set again below when drawn)
     if (!g) return;
     // entry.liveMode: drawn by the browser instead (live.js) — skip here.
     // entry.suspended: a glassMorph target while its film plays (motion.js).
@@ -569,10 +823,19 @@ function GlassMesh({ entry, controllers, sharedTexture }) {
       c.clipAncestors = clipAncestors(el);
       c.pinned = isPinned(el);
     }
-    // A page-anchored canvas scrolls with the page, a fixed / sticky element
-    // doesn't: its glass would slide off it while scrolling, so it keeps its
-    // own CSS look instead (no data-glass-drawn).
-    if (c.pinned && pageAnchored(place.layer)) {
+    // anchor "page": the layer's in-page canvas scrolls WITH the page, so it
+    // draws glass on ordinary elements (never trailing behind them while
+    // scrolling); glass on a fixed / sticky element would slide off it, so
+    // that is drawn by the layer's window-fixed PINNED canvas instead (the
+    // provider creates it once a pinned element is reported here). Only
+    // this canvas's OWN layer is split like that — lower layers are drawn
+    // only into the buffers (what this layer refracts), where all count.
+    const own = place.layer === canvasLayer;
+    if (own && pageMode && c.reportedPinned !== c.pinned) {
+      c.reportedPinned = c.pinned;
+      setPinned(entry.id, place.layer, c.pinned);
+    }
+    if (own && (pageMode ? c.pinned : pinnedCanvas && !c.pinned)) {
       c.visible = false;
       g.visible = false;
       return;
@@ -594,22 +857,12 @@ function GlassMesh({ entry, controllers, sharedTexture }) {
     const o = outline(p.shape, box.width * a.sx, box.height * a.sy, p.radius, c.cssRadius);
     const bevel = Math.min(p.bevel, o.r > 0 ? o.r : p.bevel);
     const key = `${o.w}|${o.h}|${o.r}|${bevel}|${p.bevelSegments}|${p.profile}`;
-    // A bevelled slab takes milliseconds to build (far more on a phone), and
-    // glass whose size animates (a tab bar lens stretching while dragged, a
-    // squishing knob) changed size EVERY frame — a new mesh per frame made
-    // dragging crawl. So while the size is MOVING, a change of up to
-    // GEO_SLACK keeps the current mesh and stretches it to fit (a few % —
-    // invisible); the exact mesh is built once the size has held still for
-    // GEO_SETTLE_MS (or at once for a bigger jump / another shape).
-    const now = performance.now();
-    const sameKind = c.geo && c.geo.r === o.r && c.geo.bevel === bevel && c.geo.segments === p.bevelSegments && c.geo.profile === p.profile;
-    const nearSize = sameKind && Math.abs(o.w / c.geo.w - 1) <= GEO_SLACK && Math.abs(o.h / c.geo.h - 1) <= GEO_SLACK;
-    if (key !== c.lastKey) {
-      c.lastKey = key;
-      c.keySince = now;
-    }
-    const settled = now - (c.keySince || 0) >= GEO_SETTLE_MS;
-    if (key !== c.shapeKey && (!nearSize || settled)) {
+    // The exact mesh for every size change: slabs are stretched from one
+    // template per corner shape (shapes.js stretchedSlab — a vertex copy,
+    // not a new extrusion), so even glass whose size animates every frame
+    // (a tab bar lens while dragged, a squishing knob) gets its real shape.
+    // (This replaced a stretch-the-old-mesh-and-wait workaround.)
+    if (key !== c.shapeKey) {
       const nextSlab = acquireGeometry('slab', { ...o, bevel, depth: 1, segments: p.bevelSegments, profile: p.profile });
       const nextFlat = acquireGeometry('flat', o);
       c.slabGeo?.release();
@@ -617,19 +870,17 @@ function GlassMesh({ entry, controllers, sharedTexture }) {
       c.slabGeo = nextSlab;
       c.flatGeo = nextFlat;
       c.shapeKey = key;
-      c.geo = { w: o.w, h: o.h, r: o.r, bevel, segments: p.bevelSegments, profile: p.profile };
+      c.geo = { w: o.w, h: o.h };
       slab.current.geometry = nextSlab.geo;
       tint.current.geometry = nextFlat.geo;
       tintMat.uniforms.uRadius.value = o.r;
     }
-    // Stretch the mesh to the real size (1 × 1 once the exact one is built).
-    const gsx = c.geo ? o.w / c.geo.w : 1;
-    const gsy = c.geo ? o.h / c.geo.h : 1;
+    // (The mesh is built at the size rounded to ½ px: scale the last bit.)
+    const gsx = o.w / c.geo.w;
+    const gsy = o.h / c.geo.h;
     slab.current.scale.set(gsx, gsy, 1);
     tint.current.scale.set(gsx, gsy, 1);
     tintMat.uniforms.uSize.value.set(o.w, o.h);
-    // (Keep frames coming until the exact mesh is in.)
-    if (key !== c.shapeKey) c.animating = true;
 
     // Position: centre of the (bled) box (y up).
     g.position.set(box.left + box.width / 2, -(box.top + box.height / 2), 0);
@@ -653,13 +904,15 @@ function GlassMesh({ entry, controllers, sharedTexture }) {
       g.visible = false;
       return;
     }
-    planes[0].set(new THREE.Vector3(1, 0, 0), -L); //  x ≥ L
-    planes[1].set(new THREE.Vector3(-1, 0, 0), R); //  x ≤ R
-    planes[2].set(new THREE.Vector3(0, -1, 0), -T); // css y ≥ T
-    planes[3].set(new THREE.Vector3(0, 1, 0), B); //  css y ≤ B
+    // (Plane.set copies the normal, so the shared constants are safe — no
+    // 4 new vectors per element per frame.)
+    planes[0].set(PLANE_X_POS, -L); //  x ≥ L
+    planes[1].set(PLANE_X_NEG, R); //  x ≤ R
+    planes[2].set(PLANE_Y_NEG, -T); // css y ≥ T
+    planes[3].set(PLANE_Y_POS, B); //  css y ≤ B
 
     // Morph members are drawn by their group's liquid mesh (GlassWorld).
-    const pointer = entry.state.pointer || { x: 0.5, y: 0.5 };
+    const pointer = entry.state.pointer || CENTER_POINTER;
     if (p.morph) {
       c.morphKey = p.morph;
       c.shape = {
@@ -674,6 +927,7 @@ function GlassMesh({ entry, controllers, sharedTexture }) {
         px: r.left + pointer.x * r.width,
         py: -(r.top + pointer.y * r.height),
       };
+      if (canvasLayer !== null && place.layer !== canvasLayer) c.sig = drawSig(c, a, g, o, pointer, [L, T, R, B], 'm');
       c.visible = true;
       g.visible = false;
       return;
@@ -686,6 +940,9 @@ function GlassMesh({ entry, controllers, sharedTexture }) {
       mu.glassSat.value = p.saturation;
       mu.glassBright.value = p.brightness;
       mu.glassMinify.value = 1 / (1 - p.minify);
+      mu.glassLiveMinify.value = liveMatch ? 1 : 0;
+      mu.glassHalf.value.set(o.w / 2, o.h / 2);
+      mu.glassRad.value = o.r;
       mu.glassCenter.value.set(g.position.x, g.position.y, 0);
       // Ripples (ripple.js): each ring's centre in buffer uv (projected like
       // glassCenter), radius + strength in px. Keeps drawing while any lives.
@@ -712,6 +969,8 @@ function GlassMesh({ entry, controllers, sharedTexture }) {
     u.uOpacity.value = a.op;
     u.uDebug.value = getGlobal().debugOutlines ? 1 : 0;
     u.uRim.value = a.rim;
+    u.uLive.value = liveMatch ? 1 : 0;
+    u.uBevel.value = p.bevel;
     u.uRimWidth.value = p.rimWidth;
     u.uInner.value = p.innerGlow;
     u.uLight.value.copy(lightDir(p.lightAngle));
@@ -719,7 +978,7 @@ function GlassMesh({ entry, controllers, sharedTexture }) {
     u.uPointer.value.set(pointer.x, 1 - pointer.y);
     u.uBorderW.value = p.borderWidth;
     u.uBorderOp.value = p.borderOpacity;
-    u.uBorderCol.value.set(...colorOf(p.borderColor || '#ffffff', el));
+    u.uBorderCol.value.set(borderRgb[0], borderRgb[1], borderRgb[2]);
 
     // Drop shadow (under the slab, only outside the glass shape).
     const sm = shadow.current;
@@ -735,7 +994,7 @@ function GlassMesh({ entry, controllers, sharedTexture }) {
       su.uSpread.value = p.shadowSpread;
       su.uBlur.value = p.shadowBlur;
       su.uOpacity.value = p.shadowOpacity;
-      su.uColor.value.set(...colorOf(p.shadowColor || '#1e1b4b', el));
+      su.uColor.value.set(shadowRgb[0], shadowRgb[1], shadowRgb[2]);
       sm.visible = true;
     } else sm.visible = false;
 
@@ -746,6 +1005,9 @@ function GlassMesh({ entry, controllers, sharedTexture }) {
     sm.renderOrder = entry.id * 3;
     slab.current.renderOrder = entry.id * 3 + 1;
     tint.current.renderOrder = entry.id * 3 + 2;
+    // Glass on a LOWER layer (drawn into this canvas's buffers only): its
+    // fingerprint for the "everything below" cache (GlassWorld).
+    if (canvasLayer !== null && place.layer !== canvasLayer) c.sig = drawSig(c, a, g, o, pointer, [L, T, R, B], `${borderRgb}|${shadowRgb}`);
     c.visible = true;
     g.visible = true;
   }, 1);
@@ -764,7 +1026,7 @@ function GlassMesh({ entry, controllers, sharedTexture }) {
           backsideResolution={1}
           backside={false}
           samples={p.samples}
-          thickness={p.thickness}
+          thickness={liveMatch ? p.thickness * liveBendMatch(p.ior) : p.thickness}
           ior={p.ior}
           chromaticAberration={p.chromaticAberration}
           anisotropicBlur={p.anisotropy}
@@ -808,6 +1070,14 @@ function patchMaterial(material, samples) {
   material.uniforms.glassRippleWave = { value: 14 };
   material.uniforms.glassRippleAmp = { value: 1 }; // the group's full ring strength (crest light scales with it)
   material.uniforms.glassPxUv = { value: new THREE.Vector2(0.001, 0.001) };
+  // Live minify (canvas mode, float glass — see the shader below): the lens
+  // shape (half size + corner radius, CSS px), and the size in px of what is
+  // being drawn into right now (the screen or a buffer — set per draw by the
+  // slab mesh's onBeforeRender), to find each pixel's place in the lens.
+  material.uniforms.glassLiveMinify = { value: 0 };
+  material.uniforms.glassHalf = { value: new THREE.Vector2(1, 1) };
+  material.uniforms.glassRad = { value: 0 };
+  material.uniforms.glassTargetPx = { value: new THREE.Vector2(1, 1) };
   const original = material.onBeforeCompile;
   material.onBeforeCompile = (shader, renderer) => {
     original(shader, renderer); // drei's own changes (adds our uniforms too)
@@ -816,7 +1086,9 @@ function patchMaterial(material, samples) {
       .replace(
         'uniform sampler2D buffer;',
         'uniform sampler2D buffer;\nuniform float blurLod;\nuniform float glassSat;\nuniform float glassBright;\nuniform vec3 glassCenter;\nuniform float glassMinify;' +
-          `\nuniform vec4 glassRipples[${MAX_RIPPLES}];\nuniform float glassRippleWave;\nuniform float glassRippleAmp;\nuniform vec2 glassPxUv;`
+          `\nuniform vec4 glassRipples[${MAX_RIPPLES}];\nuniform float glassRippleWave;\nuniform float glassRippleAmp;\nuniform vec2 glassPxUv;` +
+          '\nuniform float glassLiveMinify;\nuniform vec2 glassHalf;\nuniform float glassRad;\nuniform vec2 glassTargetPx;' +
+          GLSL_LIVE_MINIFY
       )
       .replace(
         'return texture2D(buffer, fragCoord.xy);',
@@ -828,7 +1100,21 @@ function patchMaterial(material, samples) {
           if (abs(glassMinify - 1.0) > 0.0001) {
             vec4 cp_ = projectionMatrix * viewMatrix * vec4(glassCenter, 1.0);
             vec2 c_ = cp_.xy / cp_.w * 0.5 + 0.5;
-            uv_ = c_ + (uv_ - c_) * glassMinify;
+            if (glassLiveMinify > 0.5) {
+              // Canvas mode, float glass: minify like LIVE glass (live.js
+              // displacementMap) — shrink the middle, squeeze the outer band
+              // so it reads exactly up to the lens's own edge, never past it;
+              // the rim's own (inward) bend then shows what's at the edge —
+              // the green ring of an active switch knob. (Scaling the read
+              // point outward everywhere read ~19% past the knob, into the
+              // page: no green ring, a white side.)
+              vec2 lp_ = (gl_FragCoord.xy / glassTargetPx - c_) / glassPxUv; // CSS px from the centre
+              float hm_ = min(glassHalf.x, glassHalf.y);
+              float r_ = clamp(1.0 + glassSdRR(lp_, glassHalf, glassRad) / hm_, 0.0, 1.0);
+              uv_ += glassNormalRR(lp_, glassHalf, glassRad) * (glassLiveBend(r_, 1.0 / glassMinify) - r_) * hm_ * glassPxUv;
+            } else {
+              uv_ = c_ + (uv_ - c_) * glassMinify;
+            }
           }
           // ripples: push the read point along each ring (a sine wave in a
           // soft envelope at the ring's radius) — the same profile as live.js.
@@ -887,6 +1173,8 @@ function makeTintMaterial() {
       uBorderW: { value: 0 },
       uBorderOp: { value: 0 },
       uBorderCol: { value: new THREE.Vector3(1, 1, 1) },
+      uLive: { value: 0 }, // canvas mode: light the rim like live (SVG) glass
+      uBevel: { value: 12 },
     },
     vertexShader: /* glsl */ `
       #include <clipping_planes_pars_vertex>
@@ -903,7 +1191,7 @@ function makeTintMaterial() {
       uniform vec3 uFrom, uVia, uTo;
       uniform float uHasVia, uAngle, uOpacity, uDebug;
       uniform vec2 uSize;
-      uniform float uRadius, uRim, uRimWidth, uInner, uGlow, uBorderW, uBorderOp;
+      uniform float uRadius, uRim, uRimWidth, uInner, uGlow, uBorderW, uBorderOp, uLive, uBevel;
       uniform vec2 uLight, uPointer;
       uniform vec3 uBorderCol;
       varying vec2 vUv;
@@ -924,7 +1212,9 @@ function makeTintMaterial() {
         vec2 half_ = uSize * 0.5;
         float d = sdRoundRect(p, half_, uRadius);               // ≤ 0 inside
         vec2 n = outwardNormal(p, half_, uRadius);
-        float w = whiteLight(d, n, uLight, uRim, uRimWidth, uInner, min(uSize.x, uSize.y));
+        float w = uLive > 0.5
+          ? liveLight(p, d, half_, uRadius, uLight, uRim, uRimWidth, uInner, uBevel)
+          : whiteLight(d, n, uLight, uRim, uRimWidth, uInner, min(uSize.x, uSize.y));
         float gr = max(min(uSize.x, uSize.y), 0.35 * max(uSize.x, uSize.y));
         vec2 gp = (vUv - uPointer) * uSize;
         w = clamp(w + uGlow * exp(-dot(gp, gp) / (gr * gr)), 0.0, 1.0);
@@ -1030,6 +1320,29 @@ function makeStudioScene(theme) {
   return scene;
 }
 
+// --- Live-glass minify, for the transmission material (canvas mode) ------------------------
+/** live.js displacementMap's minify profile, in GLSL (inserted at global scope). */
+const GLSL_LIVE_MINIFY = /* glsl */ `
+  float glassSdRR(vec2 p, vec2 b, float r) {
+    r = min(r, min(b.x, b.y));
+    vec2 q = abs(p) - b + r;
+    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+  }
+  vec2 glassNormalRR(vec2 p, vec2 b, float r) {
+    vec2 e = vec2(0.5, 0.0);
+    vec2 g = vec2(glassSdRR(p + e.xy, b, r) - glassSdRR(p - e.xy, b, r), glassSdRR(p + e.yx, b, r) - glassSdRR(p - e.yx, b, r));
+    return g / max(length(g), 1e-5);
+  }
+  // r: 0 = deepest, 1 = the edge. scaleIn < 1 shrinks (minify), > 1 magnifies.
+  float glassLiveBend(float r, float scaleIn) {
+    if (scaleIn > 1.0) return r / scaleIn;
+    float knee = 0.88 * scaleIn;
+    if (r < knee) return r / scaleIn;
+    float t = (r - knee) / (1.0 - knee);
+    return 0.88 + 0.12 * (1.0 - (1.0 - t) * (1.0 - t));
+  }
+`;
+
 // --- Shared GLSL: rounded-rectangle distance field + white light ---------------------------
 const GLSL_SHAPES = /* glsl */ `
   // Signed distance to a rounded rectangle (half-size b, radius r): ≤ 0 inside.
@@ -1045,6 +1358,21 @@ const GLSL_SHAPES = /* glsl */ `
   }
   // Specular rim (brightest facing the light, a softer echo opposite, like
   // Apple's glass) + a soft inner glow from the edge inwards.
+  // Canvas mode: the rim light and inner glow of LIVE (SVG) glass, which is
+  // what canvas mode replaces in Chromium (live.js rimShadow — four inset
+  // box-shadows): a bright edge facing the light, a softer one opposite, a
+  // 0.5 px ring all round, and an inner glow (10 + bevel) px deep. An inset
+  // shadow offset by o shows where the shape moved by o doesn't cover —
+  // sdRoundRect(p − o) — blurred over its blur radius. (y up: light = uLight.)
+  float liveLight(vec2 p, float d, vec2 half_, float r, vec2 light, float rim, float rimWidth, float inner, float bevel) {
+    float b = max(rimWidth * 0.6, 0.5);
+    float lit = rim * 0.95 * smoothstep(-b, b, sdRoundRect(p + light * rimWidth, half_, r));
+    float back = rim * 0.45 * smoothstep(-b, b, sdRoundRect(p - light * rimWidth * 0.8, half_, r));
+    float ring = rim * 0.35 * smoothstep(-0.75, -0.25, d);
+    float gb = 10.0 + bevel;
+    float glow = inner * 0.45 * smoothstep(-gb, gb, d);
+    return 1.0 - (1.0 - lit) * (1.0 - back) * (1.0 - ring) * (1.0 - glow);
+  }
   float whiteLight(float d, vec2 n, vec2 light, float rim, float rimWidth, float inner, float minSide) {
     float edge = 1.0 - smoothstep(0.0, rimWidth, -d);
     float lit = max(dot(n, light), 0.0);
@@ -1059,6 +1387,35 @@ const GLSL_SHAPES = /* glsl */ `
     return clamp(rimA + innerA, 0.0, 1.0);
   }
 `;
+
+/**
+ * A lower-layer glass element's fingerprint for one frame: everything that
+ * decides how it is drawn into the buffers (see belowSignature).
+ */
+function drawSig(c, a, g, o, pointer, clip, extra) {
+  const f = (n) => Math.round(n * 1000) / 1000;
+  return [
+    f(g.position.x), f(g.position.y), f(o.w), f(o.h), f(o.r), c.shapeKey, c.pv, c.channel,
+    clip.map((n) => Math.round(n * 10) / 10).join(','),
+    f(a.sx), f(a.sy), f(a.op), f(a.rim), f(a.glow),
+    f(a.from.x), f(a.from.y), f(a.from.z), f(a.via.x), f(a.via.y), f(a.via.z), f(a.to.x), f(a.to.y), f(a.to.z),
+    f(pointer.x), f(pointer.y), extra,
+  ].join(',');
+}
+
+/**
+ * Canvas mode: how much thicker the WebGL slab must be to bend its rim as
+ * far as the live (SVG) glass in Chromium — the look canvas mode replaces.
+ * Live glass moves the backdrop up to thickness·(ior−1)·4 px at the very
+ * edge (live.js: strength/2); the transmission material, at a vertical rim,
+ * thickness·cos(asin(1/ior)). Measured side by side, canvas-mode sidebars
+ * bent about half as much as live ones and read as flat rounded boxes.
+ * (Normal mode is unchanged — it's what Safari / Firefox show.)
+ */
+function liveBendMatch(ior) {
+  if (!(ior > 1.0001)) return 1;
+  return Math.max(1, ((ior - 1) * 4) / Math.sqrt(1 - 1 / (ior * ior)));
+}
 
 /** CSS-style angle (0 = top, 90 = right, −45 = top-left) → direction (y up). */
 const lightVec = new THREE.Vector2();
@@ -1149,9 +1506,16 @@ function makeLiquidMaterial() {
         float d = field(p);
         if (d > 1.0) discard;
         float aa = clamp(0.5 - d, 0.0, 1.0);
-        vec2 e = vec2(0.75, 0.0);
-        vec2 g = vec2(field(p + e.xy) - field(p - e.xy), field(p + e.yx) - field(p - e.yx));
-        vec2 n = g / max(length(g), 1e-5);
+        // The normal (4 more passes over every shape) is only needed near the
+        // edge: deeper in than the bevel the refraction is zero (tilt(0) = 0),
+        // and past 6 × the inner glow's max reach (14 px) the light it steers
+        // is below 1/255 — so the interior skips it with the same pixels.
+        vec2 n = vec2(0.0, 1.0);
+        if (d > -max(uBevel, 84.0) - 1.0) {
+          vec2 e = vec2(0.75, 0.0);
+          vec2 g = vec2(field(p + e.xy) - field(p - e.xy), field(p + e.yx) - field(p - e.yx));
+          n = g / max(length(g), 1e-5);
+        }
 
         // Refraction: look inwards across the rim, more at the very edge.
         float x = clamp(1.0 + d / max(uBevel, 0.5), 0.0, 1.0);
@@ -1230,6 +1594,264 @@ function updateLiquid(l, members, size, viewTop = 0) {
   l.mesh.renderOrder = Math.min(...members.map((m) => m.id)) * 3 + 1;
 }
 
+// --- Canvas mode: the live page + floating glass HTML ---------------------------------------
+/**
+ * Textured rectangles for canvas mode: the page root (once per paint where
+ * it changed) and each floating glass element's own HTML (re-captured only
+ * when the paint event says it changed). Pictures come straight from the
+ * page canvas (texElementSubImage2D) into render-target textures; they are
+ * premultiplied, so they're drawn with ONE / ONE_MINUS_SRC_ALPHA.
+ */
+const WARM_FRAMES = 3;
+function makeElementLayer(renderer) {
+  const scene = new THREE.Scene();
+  const quad = new THREE.PlaneGeometry(1, 1);
+  const glc = renderer.getContext();
+  const items = new Map(); // element → { rt, mesh, mat, w, h, src }
+  let size = { width: 1, height: 1 };
+  let changed = null;
+  let drawn = new Set();
+  let dpr = 1;
+  let retry = false;
+  const makeMat = () =>
+    new THREE.ShaderMaterial({
+      uniforms: { tMap: { value: null } },
+      vertexShader: /* glsl */ `
+        #include <clipping_planes_pars_vertex>
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+          gl_Position = projectionMatrix * mvPosition;
+          #include <clipping_planes_vertex>
+        }`,
+      fragmentShader: /* glsl */ `
+        #include <clipping_planes_pars_fragment>
+        uniform sampler2D tMap;
+        varying vec2 vUv;
+        void main() {
+          #include <clipping_planes_fragment>
+          gl_FragColor = texture2D(tMap, vec2(vUv.x, 1.0 - vUv.y)); // (row 0 = the element's top)
+        }`,
+      transparent: true,
+      blending: THREE.CustomBlending,
+      blendEquation: THREE.AddEquation,
+      blendSrc: THREE.OneFactor,
+      blendDst: THREE.OneMinusSrcAlphaFactor,
+      blendSrcAlpha: THREE.OneFactor,
+      blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+      clipping: true,
+    });
+  const item = (el) => {
+    let it = items.get(el);
+    if (!it) {
+      const mat = makeMat();
+      const mesh = new THREE.Mesh(quad, mat);
+      mesh.frustumCulled = false;
+      mesh.visible = false;
+      scene.add(mesh);
+      // warm: capture again on the next few frames regardless — an element's
+      // first pictures right after it became drawable can come out
+      // incomplete (seen: a sidebar without its menu items), and nothing
+      // later "changes" to trigger another capture.
+      it = { rt: null, mesh, mat, w: 0, h: 0, src: '', warm: WARM_FRAMES };
+      items.set(el, it);
+    }
+    return it;
+  };
+  const ensureRt = (it, w, h, exact = false) => {
+    if (it.rt && it.w === w && it.h === h) return false;
+    it.rt?.dispose();
+    // exact (label pictures): nearest — drawn 1:1 on whole device px, an
+    // exact copy. The page picture stays linear: it is also scaled down into
+    // the refraction buffers.
+    const f = exact ? THREE.NearestFilter : THREE.LinearFilter;
+    it.rt = new THREE.WebGLRenderTarget(w, h, { depthBuffer: false, generateMipmaps: false, minFilter: f, magFilter: f });
+    it.mat.uniforms.tMap.value = it.rt.texture;
+    it.w = w;
+    it.h = h;
+    it.src = '';
+    it.warm = WARM_FRAMES;
+    return true;
+  };
+  /** Copy an element's picture into its texture. false = not drawable (yet). */
+  const upload = (it, el, cfg) => {
+    const t0 = performance.now();
+    stats.canvasUploads = (stats.canvasUploads || 0) + 1;
+    try {
+      renderer.initRenderTarget(it.rt);
+      glc.bindTexture(glc.TEXTURE_2D, renderer.properties.get(it.rt.texture).__webglTexture);
+      glc.pixelStorei(glc.UNPACK_FLIP_Y_WEBGL, false);
+      // Premultiplied on upload: drawn with ONE / ONE_MINUS_SRC_ALPHA. As
+      // straight alpha, every half-transparent pixel (glyph edges, a faded
+      // "Disabled" label) was added at full colour — text looked bold and
+      // glowing, faded things at full strength.
+      glc.pixelStorei(glc.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+      glc.texElementSubImage2D(glc.TEXTURE_2D, 0, 0, 0, el, cfg);
+      return true;
+    } catch {
+      return false; // (e.g. it only became drawable this frame — next paint)
+    } finally {
+      renderer.resetState();
+      stats.canvasUploadMs = (stats.canvasUploadMs || 0) + (performance.now() - t0);
+    }
+  };
+  const hideAll = () => {
+    for (const it of items.values()) it.mesh.visible = false;
+  };
+  return {
+    scene,
+    /**
+     * Start of a frame: the canvas size and the paint event's changed elements.
+     * The changed list is NOT trusted: Chromium (157) left some changes out —
+     * a sidebar whose menu items appear a moment after it mounts kept its
+     * first, empty picture. Re-copying every picture each frame is cheap
+     * (measured: 76 pictures ≈ 1.4 ms) and frames only run when something
+     * changed, so every picture is copied every frame.
+     */
+    begin(sz, ch) {
+      size = sz;
+      changed = ch;
+      drawn = new Set();
+      dpr = renderer.getPixelRatio();
+      retry = false;
+      for (const [el, it] of items) {
+        if (el.isConnected) continue;
+        scene.remove(it.mesh);
+        it.rt?.dispose();
+        it.mat.dispose();
+        items.delete(el);
+      }
+    },
+    /** The live page, full canvas. */
+    preparePage(root) {
+      hideAll();
+      const it = item(root);
+      const w = Math.max(1, Math.round(size.width * dpr));
+      const h = Math.max(1, Math.round(size.height * dpr));
+      const fresh = ensureRt(it, w, h);
+      if (fresh || !changed || changed.has(root) || !it.src || it.warm > 0) {
+        if (it.warm > 0) {
+          it.warm -= 1;
+          retry = true; // (keep painting until warmed up)
+        }
+        if (!upload(it, root, { width: w, height: h })) {
+          retry = true;
+          return false;
+        }
+        it.src = 'page';
+      }
+      it.fails = 0;
+      it.mesh.scale.set(size.width, size.height, 1);
+      it.mesh.position.set(size.width / 2, -size.height / 2, 0);
+      it.mat.clippingPlanes = null;
+      it.mesh.visible = true;
+      return true;
+    },
+    /** One stratum's floating glass HTML (or, rest: every floating element not drawn yet). */
+    prepareLabels(pass) {
+      hideAll();
+      const list = [];
+      if (pass.rest) {
+        for (const el of drawableElements()) if (!drawn.has(el)) list.push({ el, planes: null });
+      } else {
+        for (const c of pass.ctls) for (const m of c.members || [c]) if (m.entry) list.push({ el: m.entry.el, planes: m.planes });
+      }
+      let any = false;
+      list.forEach(({ el, planes }, order) => {
+        drawn.add(el);
+        const info = drawInfo(el);
+        if (!info || !el.isConnected) return;
+        const it = item(el);
+        // Pixel-exact: the picture is w × h DEVICE px, drawn at whole device
+        // px, 1:1 — any fractional position or scale resamples (bilinear) and
+        // smeared every glyph and icon. (The capture rect is in the element's
+        // CSS px — tested on a 2× canvas grid — and the destination size in
+        // device px.)
+        const w = Math.max(1, Math.round(info.sw * dpr));
+        const h = Math.max(1, Math.round(info.sh * dpr));
+        const fresh = ensureRt(it, w, h, true);
+        const src = `${info.sx},${info.sy},${info.sw},${info.sh},${dpr}`;
+        const again = needsRecopy(el);
+        if (again) retry = true; // (more frames until the repaint has been copied)
+        if (fresh || !changed || changed.has(el) || it.src !== src || it.warm > 0 || again) {
+          if (it.warm > 0) {
+            it.warm -= 1;
+            retry = true; // (keep painting until warmed up)
+          }
+          if (!upload(it, el, { sx: info.sx, sy: info.sy, swidth: info.sw, sheight: info.sh, width: w, height: h })) {
+            // Not capturable (yet): it only became drawable this frame, or
+            // it isn't rendered (display: none). Retry just this one, a few
+            // times — never re-copy everything because of it.
+            it.src = '';
+            it.fails = (it.fails || 0) + 1;
+            if (it.fails <= 3) retry = true;
+            return;
+          }
+          it.src = src;
+          it.fails = 0;
+        }
+        const cw = w / dpr; // (exact texture size in CSS px)
+        const ch = h / dpr;
+        const left = Math.round((info.x + info.sx) * dpr) / dpr; // (whole device px)
+        const top = Math.round((info.y + info.sy) * dpr) / dpr;
+        it.mesh.scale.set(cw, ch, 1);
+        it.mesh.position.set(left + cw / 2, -(top + ch / 2), 0);
+        it.mesh.renderOrder = order;
+        it.mat.clippingPlanes = planes || null;
+        it.mesh.visible = true;
+        any = true;
+      });
+      return any;
+    },
+    /** Did a picture fail to copy (ask for another paint)? */
+    get retry() {
+      return retry;
+    },
+    dispose() {
+      for (const it of items.values()) {
+        it.rt?.dispose();
+        it.mat.dispose();
+      }
+      items.clear();
+      quad.dispose();
+    },
+  };
+}
+
+// --- "Everything below" fingerprint ----------------------------------------------------------
+/**
+ * One string that changes whenever anything drawn under a canvas's OWN glass
+ * would change: the background pass, every lower glass element (GlassMesh
+ * writes c.sig each frame — position, size, shape, clip, eased values,
+ * settings), the page picture (version + how far it has slid) and the dialog
+ * dimmer. null = don't cache this frame (something below is animating, or
+ * hasn't reported yet).
+ */
+function belowSignature(passes, own0, kit, { size, viewTop, lodScale, layer }) {
+  const parts = [kit.bgSig(), size.width, size.height, viewTop, lodScale, getGlassTheme()];
+  for (let i = 0; i < own0; i++) {
+    const pass = passes[i];
+    if (pass.type === 'snapshot') {
+      parts.push('S', snapshot.version, snapshot.canvas ? 1 : 0, window.scrollX - snapshot.scrollX, window.scrollY - snapshot.scrollY);
+    } else if (pass.type === 'underlay') {
+      parts.push('U', kit.underlayKey(layer));
+    } else {
+      parts.push('G', pass.channel);
+      for (const c of pass.ctls) {
+        for (const m of c.members || [c]) {
+          if (m.animating || !m.sig) return null;
+          parts.push(m.sig);
+        }
+      }
+    }
+  }
+  return parts.join('~');
+}
+
 // --- Buffers, background, snapshot and blit helpers -------------------------------------------
 /**
  * @param {boolean} paintsImage  this is the full base canvas: once
@@ -1247,6 +1869,8 @@ function makeKit(paintsImage) {
     });
   const bufA = target();
   const bufB = target();
+  // "Everything below" cache (GlassWorld: belowSignature) — floating canvases.
+  const below = { rt: target(), sig: null, lastSig: null };
   const quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   const quad = new THREE.PlaneGeometry(1, 1);
 
@@ -1256,7 +1880,9 @@ function makeKit(paintsImage) {
   let bg = backgroundFor(getGlobal().background, getGlassTheme());
   const bgMat = new THREE.ShaderMaterial({
     uniforms: {
-      uSize: { value: new THREE.Vector2(1, 1) },
+      uSize: { value: new THREE.Vector2(1, 1) }, // the WINDOW (CSS px)
+      uCanvas: { value: new THREE.Vector2(1, 1) }, // this canvas (CSS px)
+      uTop: { value: 0 }, // this canvas's top edge, in window px (in-page canvases)
       // global.backgroundImage (background "auto" only): the picture + its size.
       uImage: { value: null },
       uImageSize: { value: new THREE.Vector2(1, 1) },
@@ -1276,7 +1902,9 @@ function makeKit(paintsImage) {
   // flat page colour, and base glass stays live (live.js).
   let bgImageUrl = null;
   let bgImageTex = null;
-  let bgImageExact = false; // painting the picture as an exact background (syncTheme)
+  let bgImageExact = false; // painting the picture ON SCREEN as an exact background (syncTheme)
+  let imageInBuffer = false; // the picture is what base glass refracts (syncTheme)
+  let screenPaint = true; // may this canvas paint the background on screen? (syncTheme)
   function loadBackgroundImage(url) {
     bgImageUrl = url;
     bgImageTex?.dispose();
@@ -1344,13 +1972,29 @@ function makeKit(paintsImage) {
   return {
     bufA,
     bufB,
+    below,
     quadCam,
+    /** What the background pass draws (for the "everything below" fingerprint). */
+    bgSig() {
+      const u = bgMat.uniforms;
+      return `${bgShaderKey}|${u.uSize.value.x},${u.uSize.value.y}|${u.uCanvas.value.x},${u.uCanvas.value.y}|${u.uTop.value}|${bgImageTex ? bgImageTex.id : 0}`;
+    },
+    /** The dialog dimmer's colour (fingerprint). */
+    underlayKey(layer) {
+      const host = getHosts().get(layer);
+      return host?.parentElement ? getComputedStyle(host.parentElement).backgroundColor : '';
+    },
     bgMat,
     bgScene,
     snapScene,
     underScene,
-    /** Swap the background shader if the theme / background / picture changed. */
-    syncTheme() {
+    /**
+     * Swap the background shader if the theme / background / picture changed.
+     * @param {boolean} [paintOnScreen] false: never paint the background on
+     *   screen (in-page and pinned canvases — see GlassWorld).
+     */
+    syncTheme(paintOnScreen = true) {
+      screenPaint = paintOnScreen;
       const g = getGlobal();
       bg = backgroundFor(g.background, getGlassTheme());
       // The picture only stands in for "auto" (an exact CSS copy is painted
@@ -1358,11 +2002,15 @@ function makeKit(paintsImage) {
       const imageUrl = bg.paint ? null : g.backgroundImage;
       if (imageUrl !== bgImageUrl) loadBackgroundImage(imageUrl);
       const useImage = Boolean(imageUrl && bgImageTex);
-      // Loaded → an exact background: painted on screen, base glass WebGL.
-      // Not with anchor "page": that canvas is taller than the window and
-      // scrolls with the page, so it can't stand in for a window-fixed picture.
-      bgImageExact = paintsImage && useImage && g.anchor !== 'page';
-      if (paintsImage) setImageBackdrop(bgImageExact ? imageUrl : null);
+      // Loaded → an exact background: base glass stays WebGL and refracts it
+      // (live.js is told). The window-fixed base canvas also paints it on
+      // screen; an in-page one doesn't (it scrolls with the page between
+      // redraws — the site's own CSS picture shows through instead), but
+      // its buffer draws the picture in window coordinates, so the glass
+      // refracts exactly what is behind it.
+      imageInBuffer = paintsImage && useImage;
+      bgImageExact = imageInBuffer && paintOnScreen;
+      if (paintsImage) setImageBackdrop(imageInBuffer ? imageUrl : null);
       const key = useImage ? `image|${imageUrl}` : bg.key;
       if (key === bgShaderKey) return;
       bgShaderKey = key;
@@ -1370,7 +2018,7 @@ function makeKit(paintsImage) {
       bgMat.needsUpdate = true; // recompile once (a few ms, only on a change)
     },
     /** Draw the background on screen too? (exact CSS copies, or the loaded picture) */
-    paintBackground: () => bg.paint || bgImageExact,
+    paintBackground: () => screenPaint && (bg.paint || bgImageExact),
     /** "auto" background with a gradient / image the shader can't redraw? */
     // Not while the base canvas paints global.backgroundImage — checked
     // through the shared flag (isImageBackdrop), not this kit's own
@@ -1380,7 +2028,7 @@ function makeKit(paintsImage) {
     // tiles every frame; the base canvas put it back the next frame, and
     // each flip woke GlassProvider's MutationObserver → an endless redraw
     // loop. (Its buffer refracts the same picture once its own copy loads.)
-    backgroundIsImage: () => bg.image && !bgImageExact && !isImageBackdrop(getGlobal().backgroundImage),
+    backgroundIsImage: () => bg.image && !imageInBuffer && !isImageBackdrop(getGlobal().backgroundImage),
     blit(gl, from, to) {
       blitMat.uniforms.tMap.value = from.texture;
       gl.setRenderTarget(to);
@@ -1389,7 +2037,15 @@ function makeKit(paintsImage) {
     /** Place the latest page picture, slid by the scroll since it was taken. */
     updateSnapshot() {
       if (!snapshot.canvas) return false;
-      if (snapVersion !== snapshot.version) {
+      if (snapVersion !== snapshot.version && snapTex && snapTex.image?.width === snapshot.canvas.width && snapTex.image?.height === snapshot.canvas.height) {
+        // Same size as the last picture: re-use the texture (three.js only
+        // re-uploads the pixels into the storage it already has) instead of
+        // freeing it and allocating a new one — on phones a full-page picture
+        // is up to 8192 px tall, and the free + allocate + upload stalled.
+        snapTex.image = snapshot.canvas;
+        snapTex.needsUpdate = true;
+        snapVersion = snapshot.version;
+      } else if (snapVersion !== snapshot.version) {
         snapTex?.dispose();
         snapTex = new THREE.CanvasTexture(snapshot.canvas);
         snapTex.minFilter = THREE.LinearFilter;
@@ -1418,6 +2074,7 @@ function makeKit(paintsImage) {
     dispose() {
       bufA.dispose();
       bufB.dispose();
+      below.rt.dispose();
       quad.dispose();
       bgMat.dispose();
       bgImageUrl = null; // a load still in flight disposes its own texture
@@ -1460,9 +2117,6 @@ function fitToScreen(tex) {
   return new THREE.CanvasTexture(c);
 }
 
-function pageAnchored(layer) {
-  return (layer === 'base' || layer === 'float') && getGlobal().anchor === 'page';
-}
 
 /**
  * Put a page-anchored canvas round the visible part of the page and aim the

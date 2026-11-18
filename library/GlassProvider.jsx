@@ -57,12 +57,32 @@ import { lazy, Suspense, useCallback, useEffect, useInsertionEffect, useLayoutEf
 import { createPortal } from 'react-dom';
 import glassCss from './glass.css?inline';
 import { configureGlass, getGlobal, glassRoot, notifyConfigChanged, subscribeConfig } from './config';
-import { allEntries, getHosts, holdRender, placement, registerFallbackHost, registerHost, requestRender, setIconRenderer, setStatus, subscribeHosts, subscribeProps, subscribeStructure } from './registry';
+import {
+  allEntries,
+  getHosts,
+  getPinnedHosts,
+  holdRender,
+  pinnedLayers as getPinnedLayers,
+  placement,
+  registerFallbackHost,
+  registerHost,
+  registerPinnedHost,
+  requestRender,
+  setIconRenderer,
+  setStatus,
+  subscribeHosts,
+  subscribePinned,
+  subscribeProps,
+  subscribeStructure,
+} from './registry';
 import { scheduleLiveSync, startLive } from './live';
 import { setSnapshotNonce } from './snapshot';
 import { defineGlassElement } from './element';
+import { canvasBackdropWanted, startPage } from './pageCanvas';
 
 const GlassCanvas = lazy(() => import('./GlassCanvas'));
+// Canvas mode (global.backdrop "canvas"): the page canvas's glass engine.
+const PageGlass = lazy(() => import('./GlassCanvas').then((m) => ({ default: m.PageGlass })));
 
 /** Placeholder "problem" until the first effect has checked the browser. */
 const STARTING = 'starting';
@@ -162,6 +182,25 @@ export default function GlassProvider({ children, config, renderIcon, injectStyl
   useLayoutEffect(() => {
     defineGlassElement();
   }, []);
+
+  // --- Canvas mode (pageCanvas.js): decided ONCE, on the first render —
+  // switching it moves the whole page into / out of a canvas, which would
+  // remount the app (and lose its state). Needs the config to ask for it,
+  // HTML-in-Canvas, and nothing that would stop the glass (mobile layout,
+  // "Reduce transparency", no hardware WebGL 2).
+  const [canvasMode] = useState(() => typeof window !== 'undefined' && canvasBackdropWanted() && blocker() === null);
+  const pageCanvasRef = useRef(null);
+  const pageRootRef = useRef(null);
+  useLayoutEffect(() => {
+    if (!canvasMode || !pageCanvasRef.current || !pageRootRef.current) return undefined;
+    const html = document.documentElement;
+    html.setAttribute('data-glass-canvas', '');
+    const stop = startPage(pageCanvasRef.current, pageRootRef.current);
+    return () => {
+      stop();
+      html.removeAttribute('data-glass-canvas');
+    };
+  }, [canvasMode]);
 
   // --- One provider at a time ---
   const token = useRef(null);
@@ -266,7 +305,9 @@ export default function GlassProvider({ children, config, renderIcon, injectStyl
   }, [active, ready, duplicate]);
 
   // Live (real-time) floating glass in Chromium browsers.
-  useEffect(() => (active ? startLive() : undefined), [active]);
+  // (Not in canvas mode: the page is drawn by the canvas, where an SVG
+  // backdrop filter can't see anything — all glass is WebGL there.)
+  useEffect(() => (active && !canvasMode ? startLive() : undefined), [active, canvasMode]);
 
   // Redraw triggers (also for the mobile-layout exception canvases).
   useEffect(() => {
@@ -279,7 +320,20 @@ export default function GlassProvider({ children, config, renderIcon, injectStyl
         requestRender();
       });
     };
-    const onAnim = () => holdRender(800); // keep drawing while CSS animates
+    // Keep drawing while CSS animates — but not for a transition that can't
+    // move or restyle any glass (see touchesGlass / PAINT_ONLY below): a link
+    // or table row fading its colour on hover used to keep EVERY glass canvas
+    // redrawing for 800 ms.
+    const onTransition = (ev) => {
+      if (PAINT_ONLY.has(ev.propertyName) && !touchesGlass(ev.target)) return;
+      holdRender(800);
+    };
+    const onAnim = () => holdRender(800);
+    // Scrolling the window, or a box with glass in it (or around it), moves
+    // glass; scrolling a box with no glass anywhere in or around it doesn't.
+    const onScroll = (ev) => {
+      if (touchesGlass(ev.target)) requestRender();
+    };
     // DOM changes can move glass elements. (Text rewritten with the same
     // value — snapDOM does that while capturing — moves nothing, and neither
     // do the glass's own canvases and filters.)
@@ -288,25 +342,29 @@ export default function GlassProvider({ children, config, renderIcon, injectStyl
     });
     const root = glassRoot();
     if (root) mo.observe(root, { subtree: true, childList: true, attributes: true, characterData: true, characterDataOldValue: true });
-    window.addEventListener('scroll', requestRender, { capture: true, passive: true });
+    window.addEventListener('scroll', onScroll, { capture: true, passive: true });
     window.addEventListener('resize', requestRender, { passive: true });
-    document.addEventListener('transitionrun', onAnim, true);
+    document.addEventListener('transitionrun', onTransition, true);
     document.addEventListener('animationstart', onAnim, true);
     document.fonts?.ready?.then(soon);
     return () => {
       cancelAnimationFrame(raf);
       mo.disconnect();
-      window.removeEventListener('scroll', requestRender, { capture: true });
+      window.removeEventListener('scroll', onScroll, { capture: true });
       window.removeEventListener('resize', requestRender);
-      document.removeEventListener('transitionrun', onAnim, true);
+      document.removeEventListener('transitionrun', onTransition, true);
       document.removeEventListener('animationstart', onAnim, true);
     };
   }, [drawing, layout.root]);
 
   // Layer hosts: base + float live here; "modal" comes from <GlassLayerHost>.
   const [hosts, setHosts] = useState(() => getHosts());
+  const [pinHosts, setPinHosts] = useState(() => getPinnedHosts());
   useEffect(() => {
-    const sync = () => setHosts(getHosts());
+    const sync = () => {
+      setHosts(getHosts());
+      setPinHosts(getPinnedHosts());
+    };
     const off = subscribeHosts(sync);
     sync(); // hosts may have registered (layout effects) before we subscribed
     return off;
@@ -329,10 +387,43 @@ export default function GlassProvider({ children, config, renderIcon, injectStyl
     };
   }, []);
 
+  // anchor "page": layers with glass on fixed / sticky elements get a second,
+  // window-fixed "pinned" canvas for that glass (registry.js setPinned).
+  const [pinned, setPinnedLayers] = useState(() => getPinnedLayers());
+  useEffect(() => {
+    const sync = () => setPinnedLayers(getPinnedLayers());
+    sync();
+    return subscribePinned(sync);
+  }, []);
+  const zOf = (layer) => (layer === 'base' ? layout.zBase : layer === 'top' ? layout.zTop : layout.zFloat);
+  // Only for layers whose canvas really sits in the page (an app's own
+  // window-fixed host — a dialog, an orb's container — needs no twin).
+  const pinnedWanted = layout.anchor === 'page' ? pinned.filter((l) => hosts.get(l)?.dataset.glassAnchor === 'page') : [];
+  const pinnedDrawn = mobileOnly ? pinnedWanted.filter((l) => mobileLayers.includes(l)) : active ? pinnedWanted : [];
+
+  // Canvas mode: the page itself is rendered inside the page canvas (its
+  // drawable root scrolls instead of the window); the canvas draws it and
+  // every glass layer in it, so there are no base / float / top canvases.
+  const content = canvasMode ? (
+    <canvas ref={pageCanvasRef} data-glass-page="" layoutsubtree="" content="drawable" style={PAGE_CANVAS_STYLE}>
+      <div ref={pageRootRef} data-glass-page-root="" drawable="" style={PAGE_ROOT_STYLE}>
+        {children}
+      </div>
+    </canvas>
+  ) : (
+    children
+  );
+
   return (
     <>
-      {children}
+      {content}
+      {canvasMode && active && (
+        <Suspense fallback={null}>
+          <PageGlass onLost={onLost} onReady={onReady} />
+        </Suspense>
+      )}
       {active &&
+        !canvasMode &&
         createPortal(
           <>
             <BodyHost layer="base" z={layout.zBase} anchor={layout.anchor} />
@@ -340,9 +431,31 @@ export default function GlassProvider({ children, config, renderIcon, injectStyl
           </>,
           document.body
         )}
-      {drawing && usesTop && createPortal(<TopHost z={layout.zTop} />, document.body)}
+      {drawing && usesTop && !canvasMode && createPortal(<TopHost z={layout.zTop} anchor={layout.anchor} />, document.body)}
+      {pinnedDrawn.length > 0 &&
+        createPortal(
+          <>
+            {pinnedDrawn.map((l) => (
+              <PinnedHost key={l} layer={l} z={zOf(l)} />
+            ))}
+          </>,
+          document.body
+        )}
+      {[...pinHosts.entries()]
+        .filter(([layer]) => pinnedDrawn.includes(layer))
+        .map(([layer, el]) =>
+          createPortal(
+            <Suspense fallback={null}>
+              <GlassCanvas layer={layer} layers={mobileOnly ? mobileLayers : undefined} pinned onLost={onLost} />
+            </Suspense>,
+            el,
+            `glass-pinned-${layer}`
+          )
+        )}
       {active &&
-        [...hosts.entries()].map(([layer, el]) =>
+        [...hosts.entries()]
+          .filter(([layer]) => !canvasMode || !['base', 'float', 'top'].includes(layer))
+          .map(([layer, el]) =>
           createPortal(
             <Suspense fallback={null}>
               <GlassCanvas layer={layer} onLost={onLost} onReady={layer === 'base' ? onReady : undefined} />
@@ -367,6 +480,11 @@ export default function GlassProvider({ children, config, renderIcon, injectStyl
   );
 }
 
+// Canvas mode: the page canvas fills the window; its drawable root is the
+// page's scroll box (the window itself no longer scrolls).
+const PAGE_CANVAS_STYLE = { position: 'fixed', inset: 0, width: '100vw', height: '100vh', display: 'block' };
+const PAGE_ROOT_STYLE = { width: '100%', height: '100%', overflow: 'auto', position: 'relative' };
+
 /** The config settings the provider lays the page out with (+ a change key). */
 function layoutOf() {
   const g = getGlobal();
@@ -384,6 +502,47 @@ function stableKey(v) {
 }
 
 /** Is this node part of the glass itself (a layer canvas host, the live filters)? */
+/**
+ * CSS properties whose transition only repaints the element itself — it
+ * can't move, resize or reveal anything else on the page. (Layout ones —
+ * width, margin, transform, top… — can push glass elsewhere around, so
+ * those always keep frames coming.)
+ */
+const PAINT_ONLY = new Set([
+  'color',
+  'background-color',
+  'background',
+  'background-image',
+  'background-position',
+  'border-color',
+  'border-top-color',
+  'border-right-color',
+  'border-bottom-color',
+  'border-left-color',
+  'outline',
+  'outline-color',
+  'outline-offset',
+  'box-shadow',
+  'text-shadow',
+  'text-decoration-color',
+  'caret-color',
+  'fill',
+  'stroke',
+  'opacity',
+  'filter',
+]);
+
+/**
+ * Could something happening on this node affect glass? True for the
+ * document / window, a glass element, anything inside glass, and anything
+ * that has glass inside it.
+ */
+function touchesGlass(n) {
+  if (!n || n.nodeType !== 1) return true; // document / window: always
+  if (n.closest('[data-glass-id]')) return true;
+  return Boolean(n.querySelector('[data-glass-id]'));
+}
+
 function ownNode(n) {
   const el = n?.nodeType === 1 ? n : n?.parentElement;
   return Boolean(el?.closest?.('[data-glass-host]'));
@@ -410,10 +569,28 @@ function BodyHost({ layer, z, anchor }) {
  * scrolling with the page would skip). A FALLBACK: a <GlassLayerHost
  * layer="top"> the app mounts itself takes over while it's there.
  */
-function TopHost({ z }) {
+function TopHost({ z, anchor }) {
   const ref = useRef(null);
-  useLayoutEffect(() => registerFallbackHost('top', ref.current), []);
-  return <div ref={ref} data-glass-host="top" data-glass-ignore="" aria-hidden="true" style={{ position: 'fixed', inset: 0, zIndex: z, pointerEvents: 'none' }} />;
+  useLayoutEffect(() => registerFallbackHost('top', ref.current), [anchor]);
+  // anchor "page": in the page like BodyHost (a tab bar that scrolls with
+  // the page no longer trails it); a PINNED tab bar (fixed to the window,
+  // like iOS) gets the layer's window-fixed pinned canvas instead.
+  const style =
+    anchor === 'page'
+      ? { position: 'absolute', left: 0, top: 0, width: '100%', height: '100vh', zIndex: z, pointerEvents: 'none' }
+      : { position: 'fixed', inset: 0, zIndex: z, pointerEvents: 'none' };
+  return <div ref={ref} data-glass-host="top" data-glass-anchor={anchor} data-glass-ignore="" aria-hidden="true" style={style} />;
+}
+
+/**
+ * Window-fixed container for a layer's PINNED canvas (anchor "page"): the
+ * glass on that layer's fixed / sticky elements. Same z-index as the layer,
+ * and later in the page, so it stacks just above the layer's in-page canvas.
+ */
+function PinnedHost({ layer, z }) {
+  const ref = useRef(null);
+  useLayoutEffect(() => registerPinnedHost(layer, ref.current), [layer]);
+  return <div ref={ref} data-glass-host={layer} data-glass-pinned="" data-glass-ignore="" aria-hidden="true" style={{ position: 'fixed', inset: 0, zIndex: z, pointerEvents: 'none' }} />;
 }
 
 /**

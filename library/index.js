@@ -50,3 +50,5 @@ export { getStatus as getGlassStatus, subscribeStatus as subscribeGlassStatus, s
 // Automatic quality: which level is in use (global.quality "auto" | "high" | "medium" | "low").
 export { getGlassQuality, subscribeGlassQuality, QUALITY_LEVELS as GLASS_QUALITY_LEVELS } from './quality';
 export { LIVE_SUPPORTED as GLASS_LIVE_SUPPORTED, liveCount as glassLiveCount } from './live';
+// global.backdrop "canvas" (the live page in one canvas — Chromium 157+).
+export { CANVAS_BACKDROP_SUPPORTED as GLASS_CANVAS_BACKDROP_SUPPORTED } from './pageCanvas';
