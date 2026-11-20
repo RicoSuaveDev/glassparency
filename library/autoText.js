@@ -17,7 +17,7 @@
  *     on the GPU. Cheap: one tiny mip level of that buffer (≤ 96 px wide —
  *     the buffer already has mipmaps for the frost) is copied into a pixel
  *     buffer ASYNCHRONOUSLY (WebGL2 PIXEL_PACK_BUFFER + fence, read when the
- *     GPU is done: no pipeline stall), at most ~4 times a second, and only
+ *     GPU is done), at most once a second per canvas, and only
  *     while frames are being drawn (an idle page costs nothing). The glass's
  *     own tint, tintOpacity and brightness are then mixed in on the CPU.
  *   - Live glass (Chromium floating glass) and the CSS fallback: there are
@@ -113,11 +113,45 @@ export function applyAutoText(el, p, backdrop) {
     if (other < keep * HYSTERESIS) color = prev.color;
   }
   chosen.set(el, { color });
-  if (el.style.getPropertyValue('--glass-text') !== color) {
+  if (chosenShown.get(el) !== color) {
+    chosenShown.set(el, color);
     el.dataset.glassText = '';
-    el.style.setProperty('--glass-text', color);
+    fadeText(el, color);
   }
   return color;
+}
+
+/**
+ * Fade --glass-text into `color` over FADE_MS (stepped in JS, so no CSS
+ * transition is set on the element — a `transition: color` rule replaced
+ * the element's OWN transitions, e.g. a morph toolbar's sliding items).
+ * The first colour an element gets is set at once.
+ */
+const FADE_MS = 350;
+const chosenShown = new WeakMap(); // el → the colour it is showing / fading to
+const fading = new WeakMap(); // el → its fade's animation frame
+function fadeText(el, color) {
+  cancelAnimationFrame(fading.get(el) || 0);
+  const from = toRgb(el.style.getPropertyValue('--glass-text'), el);
+  const to = toRgb(color, el);
+  if (!from || !to || typeof requestAnimationFrame !== 'function') {
+    el.style.setProperty('--glass-text', color);
+    return;
+  }
+  const t0 = performance.now();
+  const step = (now) => {
+    const t = Math.min(1, (now - t0) / FADE_MS);
+    const k = t * t * (3 - 2 * t); // ease in-out
+    if (t >= 1) {
+      el.style.setProperty('--glass-text', color);
+      fading.delete(el);
+      return;
+    }
+    const c = from.map((v, i) => Math.round(v + (to[i] - v) * k));
+    el.style.setProperty('--glass-text', `rgb(${c[0]}, ${c[1]}, ${c[2]})`);
+    fading.set(el, requestAnimationFrame(step));
+  };
+  fading.set(el, requestAnimationFrame(step));
 }
 
 /** The colour last chosen for `el` (sampled or estimated), or null. */
@@ -125,6 +159,9 @@ export const autoTextOf = (el) => chosen.get(el)?.color ?? null;
 /** Forget `el` (its glass went away or its textColor isn't "auto" any more). */
 export function dropAutoText(el) {
   autoTextEls.delete(el);
+  chosenShown.delete(el);
+  cancelAnimationFrame(fading.get(el) || 0);
+  fading.delete(el);
   chosen.delete(el);
 }
 
@@ -148,7 +185,42 @@ export function estimateAutoText(el, p) {
 
 // --- GPU sampling (used by GlassCanvas) -----------------------------------------
 const MAX_W = 96; // mip level read back: at most this many px wide
-const INTERVAL_MS = 250; // at most ~4 samples a second per canvas
+// At most one sample a second per canvas. (Was 4: each sample's readback
+// blocks Chrome's main thread 15–35 ms while the GPU is busy — ~20% of the
+// main thread around scrolling in the UI lab. The text colour has
+// hysteresis and only flips between two colours, so once a second is plenty.)
+const INTERVAL_MS = 1000;
+
+// --- No samples while the page scrolls ----------------------------------------------
+// Reading pixels back (getBufferSubData) is a SYNCHRONOUS round trip to the
+// GPU process in Chrome — it waits behind everything the GPU has queued.
+// While scrolling, the GPU is busy re-running every live SVG glass filter, so
+// each read blocked the main thread ~20 ms (measured in the UI lab, Chrome:
+// 676 ms of a 1.5 s scroll); with checkFramebufferStatus (below) the WebGL
+// glass got only 7–8 frames per scroll and looked frozen until it ended.
+// So no samples while scrolling (+ SCROLL_QUIET_MS after); the trailing
+// timer takes one as soon as it settles. The text colour holds meanwhile
+// (it has hysteresis anyway).
+const SCROLL_QUIET_MS = 200;
+let lastScrollAt = 0;
+let scrollWatching = false;
+function watchScroll() {
+  if (scrollWatching || typeof window === 'undefined') return;
+  scrollWatching = true;
+  window.addEventListener(
+    'scroll',
+    () => {
+      lastScrollAt = performance.now();
+    },
+    { capture: true, passive: true }
+  );
+}
+
+// Framebuffer completeness, checked once per (texture, mip level).
+// checkFramebufferStatus is ALSO a synchronous GPU round trip in Chrome
+// (~23 ms each mid-scroll, measured) and it was called on every sample; a
+// texture's level doesn't change format, so the answer can't change.
+const fbChecked = new WeakMap(); // WebGLTexture → Map(level → complete?)
 
 /**
  * One per canvas. In the frame loop, for each stratum that has auto-text
@@ -168,15 +240,20 @@ export function createTextSampler(renderer, invalidate) {
   let disposed = false;
 
   /** Is a sample due this frame? (Else one more frame is asked for later.) */
+  watchScroll();
   const due = () => {
     if (!ok || disposed) return false;
     const now = performance.now();
-    if (now - lastAt >= INTERVAL_MS) return true;
+    const quietIn = lastScrollAt + SCROLL_QUIET_MS - now; // > 0 = still scrolling
+    if (now - lastAt >= INTERVAL_MS && quietIn <= 0) return true;
     if (!trailing) {
-      trailing = setTimeout(() => {
-        trailing = 0;
-        if (!disposed) invalidate();
-      }, INTERVAL_MS - (now - lastAt) + 5);
+      trailing = setTimeout(
+        () => {
+          trailing = 0;
+          if (!disposed) invalidate();
+        },
+        Math.max(INTERVAL_MS - (now - lastAt), quietIn) + 5
+      );
     }
     return false;
   };
@@ -201,7 +278,13 @@ export function createTextSampler(renderer, invalidate) {
     const prevRead = gl.getParameter(gl.READ_FRAMEBUFFER_BINDING);
     gl.bindFramebuffer(gl.READ_FRAMEBUFFER, fb);
     gl.framebufferTexture2D(gl.READ_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, level);
-    if (gl.checkFramebufferStatus(gl.READ_FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+    // (cached per texture + level — see fbChecked)
+    let levels = fbChecked.get(tex);
+    if (!levels) fbChecked.set(tex, (levels = new Map()));
+    // Only "complete" is remembered: a level the mipmaps haven't filled yet
+    // is incomplete now but fine later, so that one is asked again next time.
+    if (!levels.get(level) && gl.checkFramebufferStatus(gl.READ_FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE) levels.set(level, true);
+    if (!levels.get(level)) {
       gl.bindFramebuffer(gl.READ_FRAMEBUFFER, prevRead);
       return;
     }
@@ -220,6 +303,14 @@ export function createTextSampler(renderer, invalidate) {
       if (disposed || gl.isContextLost()) {
         gl.deleteSync(sync);
         gl.deleteBuffer(pbo);
+        return;
+      }
+      // A read queued just before a scroll started: collect it only once the
+      // scroll has settled (getBufferSubData blocks behind the GPU's queue —
+      // 50–100 ms each mid-scroll in Chrome; see SCROLL_QUIET_MS).
+      const quietIn = lastScrollAt + SCROLL_QUIET_MS - performance.now();
+      if (quietIn > 0) {
+        setTimeout(poll, quietIn + 5);
         return;
       }
       const s = gl.clientWaitSync(sync, 0, 0);

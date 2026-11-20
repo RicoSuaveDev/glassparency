@@ -88,13 +88,25 @@ const OVERLAYS = {
 // The CSS look of each glass style (see the header): edge strength, spec
 // line, ring width / fade (px at a 60px pill), fold depth (× corner radius),
 // milky veil, caustic.
+//   w / d — the edge ring's solid width / fade (× RING_W / RING_D px: the
+//   same on every control, never scaled by its size or thickness).
+//   foldCap — the most the fold band may be, in px: it follows the BEVEL
+//   (the WebGL rim is `bevel` px wide), never more than this. It used to grow
+//   with the corner radius — ~18 px on a crystal tab bar, a neon band.
 const STYLE_LOOKS = {
-  default: { edge: 1, sat: 1, spec: 1, w: 1, d: 2.5, fold: 0.43, veil: 0, caustic: 0.7 },
+  default: { edge: 1, sat: 1, spec: 1, w: 1, d: 2.5, fold: 0.43, veil: 0, caustic: 0.7, foldCap: 6 },
   // (crystal: bright, NOT more saturated — a saturated wide rim turned the
   // page behind it into a neon outline)
-  crystal: { edge: 1.3, sat: 0.35, spec: 1.6, w: 1.6, d: 5, fold: 0.6, veil: 0, caustic: 0.85 },
-  frosted: { edge: 0.7, sat: 0.8, spec: 0.6, w: 1.2, d: 7, fold: 0.3, veil: 0.16, caustic: 0.4 },
+  crystal: { edge: 1.3, sat: 0.35, spec: 1.6, w: 1.6, d: 5, fold: 0.6, veil: 0, caustic: 0.85, foldCap: 6 },
+  frosted: { edge: 0.7, sat: 0.8, spec: 0.6, w: 1.2, d: 7, fold: 0.3, veil: 0.16, caustic: 0.4, foldCap: 7 },
 };
+/** Ring px per STYLE_LOOKS w / d — a text field's ring (default: 0.4 px solid, fading by 1 px). */
+const RING_W = 0.4;
+const RING_D = 0.4;
+/** Most edge strength (k) any group / style gets — see applyCssGlass. */
+const EDGE_MAX = 1.2;
+/** Most opacity of the white spec line on the lit edge. */
+const SPEC_MAX = 0.32;
 /** "Reduce transparency" on: the site's own CSS (no frosted layers). */
 const reduced = () => {
   try {
@@ -161,18 +173,43 @@ function sizeChanged(el) {
   const short = Math.min(w, h);
   const cs = getComputedStyle(el);
   const r = Math.min(parseFloat(cs.borderTopLeftRadius) || 0, short / 2);
+  s.r = r;
+  // Size factor for the edge widths / shadow (1 = a 60px pill), capped so
+  // a big card doesn't get a huge offset shadow or a wide blurry rim.
+  s.sf = Math.min(1.6, Math.max(0.5, short / 60));
   setVars(el, s, {
     '--gp-css-r': `${r.toFixed(1)}px`,
-    // Size factor for the edge widths / shadow (1 = a 60px pill), capped so
-    // a big card doesn't get a huge offset shadow or a wide blurry rim.
-    '--gp-css-s': Math.min(1.6, Math.max(0.5, short / 60)).toFixed(2),
+    '--gp-css-s': s.sf.toFixed(2),
   });
+  bandVars(el, s);
   const key = `${qw}x${qh}`;
   if (s.size !== key) {
     s.size = key;
     const arcs = bevelArcs(qw, qh);
     setVars(el, s, { '--gp-css-arc-glint': arcs.glint, '--gp-css-arc-rim': arcs.rim });
   }
+}
+
+/**
+ * The edge bands in px (needs the look — applyCssGlass — and the size —
+ * sizeChanged): the lit / unlit ring (solid `w`, fading out by `d`) and the
+ * fold band. Both follow the BEVEL and are capped in px (STYLE_LOOKS).
+ */
+function bandVars(el, s) {
+  const b = s.band;
+  if (!b || s.r == null) return;
+  // The rim light is the SAME thin ring on every control — what a text
+  // field, checkbox or radio gets — whatever its size or thickness. It used
+  // to grow with both (× size factor × thickness): a tab bar's ring was 4×
+  // a text field's, a wide stretched band on tab bars, sidebars, top bars.
+  const w = b.w * RING_W;
+  const d = Math.max(w + 0.6, b.d * RING_D);
+  const fold = Math.min(s.r * b.foldK, b.bevel, b.foldCap);
+  setVars(el, s, {
+    '--gp-css-w': `${w.toFixed(2)}px`,
+    '--gp-css-d': `${d.toFixed(2)}px`,
+    '--gp-css-fold-d': `${Math.max(0, fold).toFixed(2)}px`,
+  });
 }
 
 /** Write CSS variables, only the ones that changed (each write restyles). */
@@ -263,7 +300,11 @@ export function applyCssGlass(el, cfg) {
   const dark = getGlassTheme() === 'dark' ? 1 : 0;
   const look = STYLE_LOOKS[cfg.style] || STYLE_LOOKS.default;
   // Edge strength from the group's rim light (0.55 = the reference look).
-  const k = clamp((cfg.rimLight ?? 0.5) / 0.55, 0, 1.6) * look.edge;
+  // Capped at EDGE_MAX: crystal (edge 1.3, rimLight ≥ 0.75) reached 1.77 —
+  // the lit edge at 1.8× brightness and the white spec line over 100 %
+  // opacity in dark mode: a glowing white ring (neon) where WebGL crystal
+  // shows a thin light rim.
+  const k = Math.min(EDGE_MAX, clamp((cfg.rimLight ?? 0.5) / 0.55, 0, 1.6) * look.edge);
   // Edge widths follow the glass's thickness (32 = the reference).
   const thick = clamp((cfg.thickness ?? 32) / 32, 0.6, 2);
   // Caustic: crystal only (or every element in the "full" budget).
@@ -280,7 +321,7 @@ export function applyCssGlass(el, cfg) {
     '--gp-css-glint-sat': (1 + (2.1 - 1.1 * dark) * k * look.sat).toFixed(3),
     '--gp-css-rim-exp': (1 - (0.16 - 0.41 * dark) * k).toFixed(3),
     '--gp-css-rim-sat': (1 + (1.2 - 0.9 * dark) * k * look.sat).toFixed(3),
-    '--gp-css-spec': ((0.13 + 0.25 * dark) * k * look.spec).toFixed(3),
+    '--gp-css-spec': Math.min(SPEC_MAX, (0.13 + 0.25 * dark) * k * look.spec).toFixed(3),
     '--gp-css-edge-w': `${(look.w * thick).toFixed(2)}px`,
     '--gp-css-edge-d': `${(look.d * thick).toFixed(2)}px`,
     '--gp-css-fold-k': look.fold.toFixed(2),
@@ -294,7 +335,9 @@ export function applyCssGlass(el, cfg) {
     '--gp-css-shadow-o': (clamp((cfg.shadowOpacity ?? 0.1) * 2.2, 0, 0.5) * (1 - dark)).toFixed(3),
     '--gp-css-caustic-o': (look.caustic * (1 - 0.6 * dark) * clamp(k, 0, 1)).toFixed(3),
   });
+  s.band = { w: look.w, d: look.d, foldK: look.fold, bevel: Math.max(1, cfg.bevel ?? 12), foldCap: look.foldCap };
   if (!s.size) sizeChanged(el);
+  else bandVars(el, s);
 }
 
 /** Remove the CSS glass from an element (its own CSS is back). */

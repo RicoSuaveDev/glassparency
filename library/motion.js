@@ -26,20 +26,24 @@
  *    laid out where it should end up — hide it with the `hidden` attribute
  *    and glassMorph shows it. The film:
  *      1. it starts as exactly `from` — same box, corner radius and glass
- *         look — which takes over: `from`'s own glass is held back and its
- *         content fades out;
+ *         look — on top of it; `from` itself stays as it is (keepFrom,
+ *         default — with keepFrom: false its glass is held back and its
+ *         content fades out while the film plays);
  *      2. that shape stretches and swells (springy) into `to`'s exact box
- *         and corner radius, while a part of it stays on `from` and shrinks
- *         away — a liquid neck when `to` is further off;
+ *         and corner radius, budding off `from` — which stays exactly as it
+ *         is — with a liquid neck between them while they're close;
  *      3. the glass blends from `from`'s look (tint, frost, thickness, rim…)
  *         to `to`'s;
  *      4. `to` takes over (its own glass, or its CSS) and its content fades
- *         in; `from` fades back in (it is only hidden during the film).
+ *         in (keepFrom: false — `from` fades back in).
  *    Backwards (reverse() / direction "out") it lands back on `from`'s exact
  *    shape and look, then `from` is shown again.
- *    How: two temporary empty <div>s in <body> with glass in ONE morph name,
- *    so one shader draws them as a single smooth distance field (merging,
- *    necking, splitting). They take `to`'s glass group + per-element props
+ *    How: `from` itself joins a temporary morph name for the film's
+ *    duration (keepFrom — keeping its own size and look), with ONE temporary
+ *    empty <div> in <body> — the body — so one shader draws them as a single
+ *    smooth distance field (budding, necking, splitting). (keepFrom: false,
+ *    or a `from` without glass: a second <div>, the anchor, stands in for
+ *    `from` and shrinks away.) They take `to`'s glass group + per-element props
  *    (or options.group), with the look blended from `from`'s resolved glass,
  *    so the film starts on `from`'s look and lands exactly on `to`'s. Both
  *    elements' own glass is suspended (registry `suspended`) while it plays.
@@ -55,9 +59,10 @@
  * =============================================================================
  */
 import { requestRender, getEntry, update } from './registry';
+import { canvasBox } from './pageCanvas';
 import { resolveGlass } from './config';
 import { reserveSnapshotArea, snapshot, subscribeSnapshot } from './snapshot';
-import { attachGlass, getGlassProps, mergeGlassProps } from './useGlass';
+import { attachGlass, getGlassProps, mergeGlassProps, restoreGlassProps } from './useGlass';
 
 const reducedMotion = () => typeof window !== 'undefined' && Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
@@ -214,7 +219,8 @@ const easeOutBack = (u, s = 1.25) => 1 + (s + 1) * (u - 1) ** 3 + s * (u - 1) **
 
 /** An element's box in window px, + its corner radius (glass or CSS). */
 function boxOf(el) {
-  const r = el.getBoundingClientRect();
+  // (canvas mode: from layout — a drawable's reported box can be stale)
+  const r = canvasBox(el) || el.getBoundingClientRect();
   return { left: r.left, top: r.top, width: r.width, height: r.height, radius: radiusOf(el, r) };
 }
 function radiusOf(el, r) {
@@ -408,11 +414,16 @@ function unhide(to) {
  *   morphRadius      how far the drops reach to melt (default 34 px)
  *   layer            glass layer of the film (default "float")
  *   fadeContent      fade `to` in at the end / out first when reversing (default true)
+ *   keepFrom         keep `from` (its glass and content) on screen the whole
+ *                    time — the target grows out of it and melts back into it
+ *                    (default true). false: `from` is hidden while the film
+ *                    plays and the film takes its place (it used to vanish
+ *                    and come back as a flat CSS blob before its glass).
  * @returns {{ finished: Promise<void>, reverse(): any, cancel(): void }}
  */
 export function glassMorph(from, to, options = {}) {
   if (!from || !to) throw new Error('glassMorph(from, to): both elements are needed');
-  const opts = { duration: OPEN_MS, reverseDuration: CLOSE_MS, morphRadius: 34, layer: 'float', fadeContent: true, ...options };
+  const opts = { duration: OPEN_MS, reverseDuration: CLOSE_MS, morphRadius: 34, layer: 'float', fadeContent: true, keepFrom: true, ...options };
   return runMorph(from, to, opts, opts.direction !== 'out');
 }
 
@@ -461,7 +472,7 @@ function runMorph(from, to, opts, forwards, resumeAt) {
   // Either way `from` is back (it is only hidden while the film plays).
   const finish = () => {
     done = true;
-    showFrom(from, true);
+    if (!opts.keepFrom) showFrom(from, true);
     setSuspended(to, false);
     to.style.removeProperty('visibility');
     if (forwards) unhide(to);
@@ -520,9 +531,23 @@ function runMorph(from, to, opts, forwards, resumeAt) {
     setSuspended(to, true);
   }
 
-  // Two empty glass shapes in ONE morph name → drawn as one liquid surface:
-  // the body (becomes `to`) and the anchor (stays on `from`, shrinks away).
-  const shapes = [0, 1].map(() => {
+  // ONE button (keepFrom, `from` has glass): `from` itself joins the film's
+  // liquid for its duration — same size, same look, never hidden or shrunk —
+  // and the film is just the BODY: it starts exactly on `from`, buds out of
+  // it (melting with it, like a morph toolbar's items out of its +) and
+  // becomes `to`; backwards it melts back into `from`. (There used to be a
+  // second copy of the button — the "anchor" — over the real one, shrinking
+  // away: two buttons on screen.)
+  // Otherwise (keepFrom: false, or `from` has no glass): two empty shapes in
+  // ONE morph name — the body, and the anchor that stands in for `from` and
+  // shrinks away.
+  const merge = Boolean(opts.keepFrom && fromEntry);
+  if (merge) {
+    const own = getGlassProps(from);
+    mergeGlassProps(from, { morph: key, morphRadius: opts.morphRadius });
+    cleanups.push(() => restoreGlassProps(from, own));
+  }
+  const shapes = (merge ? [0] : [0, 1]).map(() => {
     const d = document.createElement('div');
     d.setAttribute('aria-hidden', 'true');
     d.dataset.glassMorphShape = '';
@@ -551,10 +576,13 @@ function runMorph(from, to, opts, forwards, resumeAt) {
     currentT = t;
     const f = filmFrame(t, F, T);
     const look = mixLook(fromLook, toLook, f.look);
-    placeFixed(shapes[0], f.anchor);
-    placeFixed(shapes[1], f.body);
-    handles[0].setProps(props(look, f.anchor.radius));
-    handles[1].setProps(props(look, f.body.radius));
+    const body = merge ? 0 : 1;
+    if (!merge) {
+      placeFixed(shapes[0], f.anchor);
+      handles[0].setProps(props(look, f.anchor.radius));
+    }
+    placeFixed(shapes[body], f.body);
+    handles[body].setProps(props(look, f.body.radius));
     requestRender();
   };
 
@@ -602,11 +630,11 @@ function runMorph(from, to, opts, forwards, resumeAt) {
       // Continuing a reversed film: straight on from that frame, for the share
       // of the film that's left (`to` is already hidden behind the film).
       const goal = forwards ? 1 : 0;
-      hideFrom(from);
+      if (!opts.keepFrom) hideFrom(from);
       play(resumeAt, goal, Math.max(60, Math.abs(goal - resumeAt) * (forwards ? opts.duration : opts.reverseDuration)));
     } else if (forwards) {
       // The film starts as exactly `from` (box, radius, look): it takes over.
-      hideFrom(from);
+      if (!opts.keepFrom) hideFrom(from);
       play(0, 1, opts.duration);
     } else {
       // Backwards: `to`'s content fades out first (with its own glass still
@@ -615,7 +643,7 @@ function runMorph(from, to, opts, forwards, resumeAt) {
       // it, and it would show through `to` while that fades).
       to.style.removeProperty('visibility');
       setSuspended(to, false);
-      hideFrom(from);
+      if (!opts.keepFrom) hideFrom(from);
       const out = opts.fadeContent ? fade(to, false, true) : null;
       if (out) cleanups.push(() => out.cancel());
       else fades.get(to)?.cancel();

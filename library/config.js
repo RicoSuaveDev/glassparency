@@ -123,8 +123,10 @@ export const SCHEMA = {
   tint: { type: 'color', label: 'Tint', section: 'Colour' },
   tintOpacity: { type: 'number', min: 0, max: 1, step: 0.01, label: 'Tint opacity', section: 'Colour' },
 
-  // "auto" = textLight or textDark, whichever is more readable over what's
-  // actually behind the glass (autoText.js samples it).
+  // "auto" (the default) = textLight or textDark, whichever is more
+  // readable over what's actually behind the glass (autoText.js samples it)
+  // — set those two to change its colours. A colour here = always that
+  // colour (no auto); null = the site's own CSS text colour.
   textColor: { type: 'string', label: 'Text colour (or auto)', section: 'Content', css: true },
   textLight: { type: 'string', label: 'Auto text: light colour', section: 'Content' },
   textDark: { type: 'string', label: 'Auto text: dark colour', section: 'Content' },
@@ -283,6 +285,22 @@ function changed() {
   listeners.forEach((fn) => fn(version));
 }
 
+// --- Canvas mode (global.backdrop "canvas") -------------------------------------
+// A group may carry a "canvas": {…} block — fine-tuning merged over the
+// group's resolved values ONLY while canvas mode runs (the live page canvas,
+// pageCanvas.js). Used where canvas mode's WebGL glass can't match the live
+// (SVG) look with the same numbers — e.g. the active switch / slider knob
+// needs more bend there to catch the track's colour at its edge. Normal
+// mode (Safari, Firefox, Chromium without canvas mode) never sees it.
+export const CANVAS_KEY = 'canvas';
+let canvasMode = false;
+/** pageCanvas.js: canvas mode started / stopped (re-resolves every group). */
+export function setCanvasMode(on) {
+  if (canvasMode === Boolean(on)) return;
+  canvasMode = Boolean(on);
+  changed();
+}
+
 /** The phones / narrow-window layout that gets CSS glass only (no WebGL). */
 export const DEFAULT_MOBILE_QUERY = '(max-width: 860px)';
 
@@ -311,6 +329,17 @@ function buildGlobal() {
     // "auto" = full quality, throttled only while animation is too slow
     // (quality.js); "high" / "medium" / "low" = always that level.
     quality: ['auto', 'high', 'medium', 'low'].includes(g.quality) ? g.quality : 'auto',
+    // WebGL frost: "smooth" (default) — the buffer's mip levels are rebuilt
+    // with a dual-Kawase downsample (soft, Gaussian-like, steady while the
+    // page moves); "mip" — the GPU's own box-filtered mipmaps (the old look:
+    // blockier, shimmers a little when scrolling). Same cost per pixel.
+    blur: g.blur === 'mip' ? 'mip' : 'smooth',
+    // How WebGL glass mixes colours: "srgb" (default — the look so far) or
+    // "linear" (opt-in): rim light, border, tint (morph glass), saturation
+    // and the frost are mixed in linear light — brighter rims over dark
+    // tints, frost that keeps bright spots. The GPU's own blending (a slab's
+    // tint over the refracted page) stays sRGB. See GlassCanvas GLSL_LINEAR.
+    blend: g.blend === 'linear' ? 'linear' : 'srgb',
     debugOutlines: Boolean(g.debugOutlines),
     // CSS selector of the element whose changes move glass and whose picture
     // floating WebGL glass refracts ("body" = the whole page; a React app
@@ -538,9 +567,9 @@ function resolveCacheKey(group, props, state) {
 }
 export function resolveGlass(group, props = {}, state = {}) {
   const w = resolveWorld;
-  if (w.fileConfig !== fileConfig || w.overrides !== overrides || w.forcedStates !== forcedStates || w.theme !== theme) {
+  if (w.fileConfig !== fileConfig || w.overrides !== overrides || w.forcedStates !== forcedStates || w.theme !== theme || w.canvasMode !== canvasMode) {
     resolveCache.clear();
-    resolveWorld = { fileConfig, overrides, forcedStates, theme };
+    resolveWorld = { fileConfig, overrides, forcedStates, theme, canvasMode };
   }
   const key = resolveCacheKey(group, props, state);
   if (key !== null) {
@@ -576,6 +605,8 @@ function resolveGlassUncached(group, props = {}, state = {}) {
     merged = STYLES[style](merged, theme === 'dark');
     for (const l of layers) if (l[style]) merged = mergeProps(merged, l[style]);
   }
+  // Canvas mode only: each layer's "canvas" block, last (see setCanvasMode).
+  if (canvasMode) for (const l of layers) if (l[CANVAS_KEY]) merged = mergeProps(merged, l[CANVAS_KEY]);
   return validate(merged, group);
 }
 
@@ -593,7 +624,7 @@ export function explicitKeys(group, props = {}, state = {}) {
   const t = themeBlock();
   const layers = [fileConfig.groups?.[group] || {}, t?.groups?.[group] || {}, props, overrides[group] || {}];
   const keys = new Set();
-  const add = (o) => Object.keys(o || {}).forEach((k) => !STATE_KEYS.includes(k) && !STYLE_KEYS.includes(k) && !k.startsWith('$') && keys.add(k));
+  const add = (o) => Object.keys(o || {}).forEach((k) => !STATE_KEYS.includes(k) && !STYLE_KEYS.includes(k) && k !== CANVAS_KEY && !k.startsWith('$') && keys.add(k));
   layers.forEach(add);
   for (const key of STATE_KEYS) if (state[key]) for (const l of layers) add(l[key]);
   return keys;
@@ -602,7 +633,7 @@ export function explicitKeys(group, props = {}, state = {}) {
 function mergeProps(a, b) {
   const out = { ...a };
   for (const [k, v] of Object.entries(b || {})) {
-    if (STATE_KEYS.includes(k) || STYLE_KEYS.includes(k) || k.startsWith('$')) continue;
+    if (STATE_KEYS.includes(k) || STYLE_KEYS.includes(k) || k === CANVAS_KEY || k.startsWith('$')) continue;
     out[k] = (k === 'scale' || k === 'bleed' || k === 'padding') && v && typeof v === 'object' ? { ...(a[k] || {}), ...v } : v;
   }
   return out;

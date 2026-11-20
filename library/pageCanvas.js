@@ -31,7 +31,7 @@
  * the window. Plain JS (no three.js): this is in the main bundle.
  * =============================================================================
  */
-import { getGlobal } from './config';
+import { getGlobal, setCanvasMode } from './config';
 import { allEntries, placement, stats } from './registry';
 
 /** Can this browser run canvas mode? (HTML-in-Canvas with WebGL 2 uploads.) */
@@ -74,6 +74,8 @@ export function startPage(canvas, root) {
   if (!gl) return () => {};
   page = { canvas, root, gl, painter: null, renderer: null, ro: null, info: new Map() };
   const p = page;
+  setCanvasMode(true); // groups' "canvas" blocks apply from now on (config.js)
+  const offStyles = watchStyles(p); // style-only changes → repaint (glassMorph targets)
   sizeCanvas(p);
   p.ro = new ResizeObserver(() => {
     if (p.renderer) p.renderer.resize?.();
@@ -120,6 +122,7 @@ export function startPage(canvas, root) {
   canvas.requestPaint();
   return () => {
     canvas.onpaint = null;
+    offStyles();
     p.ro.disconnect();
     canvas.removeEventListener('webglcontextlost', onLost);
     root.removeEventListener('scroll', onScroll, { capture: true });
@@ -131,7 +134,10 @@ export function startPage(canvas, root) {
       el.removeAttribute('drawable');
       el.removeAttribute('data-glass-drawable');
     }
-    if (page === p) page = null;
+    if (page === p) {
+      page = null;
+      setCanvasMode(false);
+    }
   };
 }
 
@@ -221,13 +227,27 @@ function scheduleRenudge(p) {
     if (renudge.size) scheduleRenudge(p);
   });
 }
-/** Repaint all of a drawable element: add + remove an empty child (invisible). */
+/**
+ * Repaint all of a drawable element. It used to add + remove an EMPTY child
+ * in the same moment; read back on Chromium 157 that leaves an element whose
+ * picture is stale (recorded while hidden / out of view) exactly as it was —
+ * nothing was painted, so nothing is re-recorded. A child that PAINTS (1 px,
+ * practically invisible) and stays for two frames does re-record it.
+ */
 function nudge(el) {
   const probe = document.createElement('span');
   probe.setAttribute('data-glass-repaint', '');
+  probe.setAttribute('aria-hidden', 'true');
+  probe.style.cssText = 'position:absolute;left:0;top:0;width:1px;height:1px;background:rgba(0,0,0,0.004);pointer-events:none';
   el.appendChild(probe);
-  probe.remove();
-  recopy.set(el, 3);
+  recopy.set(el, 4);
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => {
+      probe.remove();
+      recopy.set(el, 4);
+      page?.canvas.requestPaint();
+    })
+  );
   stats.canvasRepaints = (stats.canvasRepaints || 0) + 1;
 }
 
@@ -254,6 +274,11 @@ function syncGeometry(p) {
   for (const e of allEntries()) {
     if (!root.contains(e.el) || e.el === root) continue;
     if (placement(e.id).layer === 'base') continue;
+    // Live (SVG) glass — the short list that stays live in canvas mode (a
+    // top bar + its buttons, live.js) — is painted INTO the page's picture
+    // like any other CSS: its backdrop-filter bends the page under it there.
+    // As a drawable of its own it would be left out of that picture.
+    if (e.liveMode) continue;
     floating.add(e.el);
   }
   const want = new Set();
@@ -285,6 +310,116 @@ function syncGeometry(p) {
     p.info.set(el, { x: pos.x, y: pos.y, ...box });
     canvas.updateElementGeometry(el, { canvasTransform: new DOMMatrix().translate(pos.x, pos.y) });
   }
+}
+
+/**
+ * Chromium (157) doesn't re-record a drawable element's picture when only its
+ * own STYLE changes (see checkCull), and the empty-child nudge isn't enough
+ * then either (tested): only a change that PAINTS something inside it is.
+ * glassMorph hides its target with visibility: hidden, fades its content in
+ * (an opacity animation) and shows it again — all style changes — so the
+ * picture stayed the one recorded while it was hidden: a morph menu's glass
+ * with no items on it (read back: every pixel transparent).
+ * So style / hidden / class changes in the page are watched; a drawable
+ * whose visibility, opacity, text colour or transform changed (or that is
+ * animating) is repainted
+ * (nudge) now, and again when its animations finish.
+ */
+const looks = new WeakMap(); // changed element → "visibility|opacity|text colour|transform" last seen
+function watchStyles(p) {
+  const check = (el, target) => {
+    if (!el.isConnected || !p.info.has(el)) return;
+    const cs = getComputedStyle(el);
+    // (+ the text colour where it changed: auto text — textColor "auto",
+    // autoText.js — sets --glass-text on the glass element, a style change)
+    const tc = target && target !== el ? getComputedStyle(target).color : cs.color;
+    // (+ its transform: a dragged element moved with translate / transform
+    // kept the picture recorded at its OLD place — placed at the new one,
+    // its label was cut off and shifted, e.g. a dragged auto-text chip)
+    const look = `${cs.visibility}|${cs.opacity}|${tc}|${cs.translate}|${cs.transform}|${cs.scale}|${cs.rotate}`;
+    const anims = el.getAnimations().filter((a) => a.playState === 'running');
+    const key = target || el; // (per changed element: several inside one drawable)
+    if (looks.get(key) === look && !anims.length) return;
+    looks.set(key, look);
+    deepNudge(p, el);
+    // (an opacity animation runs on the compositor: no paint at its end)
+    for (const a of anims) a.finished.then(() => deepNudge(p, el), () => deepNudge(p, el));
+  };
+  const mo = new MutationObserver((records) => {
+    const seen = new Set();
+    for (const r of records) {
+      const t = r.target.nodeType === 1 ? r.target : r.target.parentElement;
+      if (!t || seen.has(t)) continue;
+      seen.add(t);
+      const el = t.closest?.('[data-glass-drawable]');
+      if (el) check(el, t);
+      // A change on an ANCESTOR restyles the drawables inside it too — e.g.
+      // a morph toolbar's data-open moves its items (a CSS transition on
+      // translate): their pictures stayed where they were recorded, so the
+      // icons sat off to one side of the items' glass.
+      if (t.querySelector?.('[data-glass-drawable]')) {
+        for (const d of t.querySelectorAll('[data-glass-drawable]')) if (!seen.has(d)) {
+          seen.add(d);
+          check(d, d);
+        }
+      }
+    }
+  });
+  mo.observe(p.root, { subtree: true, attributes: true, attributeFilter: ['style', 'hidden', 'class'] });
+
+  // CSS transitions / animations (in or on a drawable): repainted EVERY
+  // frame while they run, and once more when they end. The style change
+  // that starts them doesn't show yet when the observer above looks (a
+  // transition starts at its old value), so a morph toolbar's items, sliding
+  // out with a transition on translate, kept a picture from mid-slide: their
+  // icons sat off to the right of the items' glass, more the further out.
+  const active = new Set();
+  let raf = 0;
+  const loop = () => {
+    raf = 0;
+    for (const d of active) {
+      if (d.isConnected && p.info.has(d)) nudge(d);
+      else active.delete(d);
+    }
+    if (active.size) {
+      p.canvas.requestPaint();
+      raf = requestAnimationFrame(loop);
+    }
+  };
+  const drawableOf = (e) => (e.target?.nodeType === 1 ? e.target.closest('[data-glass-drawable]') : null);
+  const started = (e) => {
+    const d = drawableOf(e);
+    if (!d) return;
+    active.add(d);
+    if (!raf) raf = requestAnimationFrame(loop);
+  };
+  const ended = (e) => {
+    const d = drawableOf(e);
+    if (!d) return;
+    const still = d.getAnimations({ subtree: true }).some((a) => a.playState === 'running');
+    if (!still) active.delete(d);
+    deepNudge(p, d);
+  };
+  const on = [
+    ['transitionrun', started],
+    ['animationstart', started],
+    ['transitionend', ended],
+    ['transitioncancel', ended],
+    ['animationend', ended],
+    ['animationcancel', ended],
+  ];
+  for (const [type, fn] of on) p.root.addEventListener(type, fn, true);
+  return () => {
+    mo.disconnect();
+    for (const [type, fn] of on) p.root.removeEventListener(type, fn, true);
+    cancelAnimationFrame(raf);
+    active.clear();
+  };
+}
+function deepNudge(p, el) {
+  if (!el.isConnected) return;
+  nudge(el);
+  p.canvas.requestPaint();
 }
 
 /**
@@ -348,6 +483,21 @@ function captureRect(el) {
   const x1 = Math.ceil(Math.max(...pts.map((pt) => pt.x)));
   const y1 = Math.ceil(Math.max(...pts.map((pt) => pt.y)));
   return { sx: x0, sy: y0, sw: Math.max(1, x1 - x0), sh: Math.max(1, y1 - y0) };
+}
+
+/**
+ * Canvas mode: an element's border box in window px, worked out from its
+ * LAYOUT (like the drawables' placement) — or null outside canvas mode / the
+ * page. getBoundingClientRect() can't be trusted there: a drawable reports
+ * the box the last paint placed it at — at the canvas origin before it was
+ * ever painted (e.g. a glassMorph target that was hidden until now, which
+ * sent the morph's liquid flying to the top-left). (Ignores its own CSS
+ * transform, like layout does.)
+ */
+export function canvasBox(el) {
+  if (!page || !el || !page.root.contains(el) || el === page.root) return null;
+  const pos = layoutPosition(el, page.info);
+  return { left: pos.x, top: pos.y, width: el.offsetWidth, height: el.offsetHeight };
 }
 
 /** Where to draw a drawable's picture (canvas CSS px) and what to capture — or null. */

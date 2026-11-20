@@ -33,7 +33,12 @@
  * Glassparency.configure({…}) any time (same format as glass.config.json;
  * merged over the built-in presets).
  *
- * JavaScript API (window.Glassparency in the script build):
+ * JavaScript API (window.Glassparency in the script build). Every function
+ * also has the module's name — attachGlass, setGlassProps, getGlassProps,
+ * mergeGlassProps, defineGlassElement, configureGlass, addGlassPresets,
+ * getGlassConfig, requestGlassRender, getGlassStatus / subscribeGlassStatus,
+ * getGlassQuality / subscribeGlassQuality, GLASS_VERSION — the short names
+ * below are aliases of those:
  *   start({ config, auto = true, injectStyles = true, nonce })   begin
  *   stop()                                                       remove all glass
  *   attach(el, group, props) → { setProps(props), destroy() }    by hand
@@ -169,6 +174,26 @@ export { GLASS_VERSION as version } from './index';
 export const onStatus = (fn) => subscribeStatus(fn);
 export const quality = () => getGlassQuality();
 export const onQuality = (fn) => subscribeGlassQuality(fn);
+
+// One vocabulary: the script build has the module's names too (the same
+// functions as above), so code moves between `import … from "glassparency"`
+// and window.Glassparency unchanged. The short names stay as aliases.
+export {
+  attach as attachGlass,
+  setProps as setGlassProps,
+  getProps as getGlassProps,
+  mergeProps as mergeGlassProps,
+  defineElement as defineGlassElement,
+  configure as configureGlass,
+  addPresets as addGlassPresets,
+  getConfig as getGlassConfig,
+  requestRender as requestGlassRender,
+  status as getGlassStatus,
+  onStatus as subscribeGlassStatus,
+  quality as getGlassQuality,
+  onQuality as subscribeGlassQuality,
+};
+export { GLASS_VERSION } from './index';
 
 // --- Declarative glass: data-glassparency="<group>" -------------------------------------
 

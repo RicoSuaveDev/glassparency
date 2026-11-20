@@ -7,8 +7,8 @@
     "bufferScale": 1,
     "snapshot": {
       "enabled": true,
-      "debounceMs": 450,
-      "minIntervalMs": 1200,
+      "debounceMs": 120,
+      "minIntervalMs": 300,
       "margin": 480,
       "scale": 1
     },
@@ -64,7 +64,7 @@
     "morphRadius": 24,
     "tint": "#ffffff",
     "tintOpacity": 0.3,
-    "textColor": null,
+    "textColor": "auto",
     "textLight": "#ffffff",
     "textDark": "#1d1d1f",
     "font": null,
@@ -738,7 +738,12 @@
       "shadowY": 3,
       "pressScale": 1,
       "pressGlow": 0,
-      "minify": 0.16
+      "minify": 0.16,
+      "canvas": {
+        "$comment": "Canvas mode only (global.backdrop \"canvas\"): more bend so the knob's edge catches the green track, like live (SVG) glass does with the numbers above.",
+        "thickness": 14,
+        "ior": 1.55
+      }
     },
     "sliderTrack": {
       "$comment": "Slider track (the thin bar).",
@@ -820,7 +825,12 @@
       "shadowY": 3,
       "pressScale": 1,
       "pressGlow": 0,
-      "minify": 0.1
+      "minify": 0.1,
+      "canvas": {
+        "$comment": "Canvas mode only (global.backdrop \"canvas\"): more bend so the knob's edge catches the blue fill, like live (SVG) glass does with the numbers above.",
+        "thickness": 12,
+        "ior": 1.6
+      }
     },
     "checkbox": {
       "$comment": "Checkbox box, unchecked (widgets.js blends it into checkboxOn). Its squish* values drive the press squish of checkboxes AND radios' boxes use radio.",
@@ -1232,6 +1242,10 @@
           "hover": {
             "tint": "#ffffff",
             "tintOpacity": 0.12
+          },
+          "frosted": {
+            "$comment": "Frosted makes the button milky in its own tint — white here, so the white icons on it couldn't be seen. Use the frosted top bar's own colour (the dark theme's tint) instead.",
+            "tint": "#161b2e"
           }
         },
         "card": {

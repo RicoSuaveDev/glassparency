@@ -59,6 +59,7 @@ import glassCss from './glass.css?inline';
 import { configureGlass, getGlobal, glassRoot, notifyConfigChanged, subscribeConfig } from './config';
 import {
   allEntries,
+  cannotMoveWebglGlass,
   getHosts,
   getPinnedHosts,
   holdRender,
@@ -305,9 +306,11 @@ export default function GlassProvider({ children, config, renderIcon, injectStyl
   }, [active, ready, duplicate]);
 
   // Live (real-time) floating glass in Chromium browsers.
-  // (Not in canvas mode: the page is drawn by the canvas, where an SVG
-  // backdrop filter can't see anything — all glass is WebGL there.)
-  useEffect(() => (active && !canvasMode ? startLive() : undefined), [active, canvasMode]);
+  // (Canvas mode too: an SVG backdrop filter inside the page canvas is
+  // painted into the page's picture — tested in Chrome 157 — but it only
+  // bends the page's HTML there, so only groups whose "canvas" block sets
+  // "sampler": "live" go live; none do by default — live.js modeOf.)
+  useEffect(() => (active ? startLive() : undefined), [active]);
 
   // Redraw triggers (also for the mobile-layout exception canvases).
   useEffect(() => {
@@ -338,7 +341,19 @@ export default function GlassProvider({ children, config, renderIcon, injectStyl
     // value — snapDOM does that while capturing — moves nothing, and neither
     // do the glass's own canvases and filters.)
     const mo = new MutationObserver((records) => {
-      if (records.some((r) => !ownNode(r.target) && (r.type !== 'characterData' || r.oldValue !== r.target.data))) soon();
+      if (
+        records.some(
+          (r) =>
+            !ownNode(r.target) &&
+            (r.type !== 'characterData' || r.oldValue !== r.target.data) &&
+            // An out-of-flow element with no WebGL glass in it restyling
+            // itself (an animated LIVE control: the busy progress fill, a
+            // slider knob) can't move WebGL glass — no redraw for it (see
+            // cannotMoveWebglGlass: it used to redraw every canvas every frame).
+            !(r.type === 'attributes' && r.attributeName === 'style' && cannotMoveWebglGlass(r.target))
+        )
+      )
+        soon();
     });
     const root = glassRoot();
     if (root) mo.observe(root, { subtree: true, childList: true, attributes: true, characterData: true, characterDataOldValue: true });

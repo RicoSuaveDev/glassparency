@@ -275,6 +275,36 @@ export function addRenderer(invalidate) {
 export function requestRender() {
   renderers.forEach((fn) => fn());
 }
+
+/**
+ * Can a style / size change of this element NOT move any WebGL glass?
+ * True only when ALL of these hold:
+ *   • it is out of the page flow (position absolute / fixed), so its new
+ *     size or place can't push anything else around;
+ *   • it is not WebGL glass itself, and has no WebGL glass inside it
+ *     (glass with a liveMode — "live" SVG filter or "tint" — is drawn by the
+ *     browser, never by a glass canvas).
+ * Why: an animated control drawn as LIVE glass (the busy progress bar's
+ * sliding fill, a slider knob) rewrites its inline style every frame. Each
+ * write used to wake the redraw watchers (GlassProvider's MutationObserver,
+ * useGlass's ResizeObserver), so every WebGL canvas redrew its whole layer
+ * every frame, forever — measured in the UI lab: ~219 canvas redraws a
+ * second with nothing moving. That saturated the GPU, and while scrolling
+ * Chrome then skipped the main-thread frames the WebGL glass needs: buttons
+ * and tab bars froze until the scroll ended.
+ * Anything unsure (not yet synced by live.js, in flow, has WebGL glass in
+ * it) returns false — redraw as before.
+ */
+export function cannotMoveWebglGlass(el) {
+  if (!el || el.nodeType !== 1 || !el.isConnected) return false;
+  const own = el.dataset.glassId ? entries.get(Number(el.dataset.glassId)) : null;
+  if (own && !own.liveMode) return false; // WebGL glass itself (or not synced yet)
+  for (const g of el.querySelectorAll('[data-glass-id]')) {
+    if (!entries.get(Number(g.dataset.glassId))?.liveMode) return false; // WebGL glass inside
+  }
+  const pos = getComputedStyle(el).position;
+  return pos === 'absolute' || pos === 'fixed';
+}
 let holdUntil = 0;
 export function holdRender(ms) {
   holdUntil = Math.max(holdUntil, performance.now() + ms);

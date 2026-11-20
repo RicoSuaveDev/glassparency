@@ -225,7 +225,10 @@ function GlassWorld({ layer, layers, pinned, onReady, single = null }) {
   const myHost = pinned ? getPinnedHosts().get(layer) : hosts.get(layer);
   const pageMode = !single && !pinned && myHost?.dataset.glassAnchor === 'page';
   const entries = allEntries().filter((e) => {
-    if (single) return single.root.contains(e.el);
+    // Canvas mode: the page's glass — and glassMorph's film shapes (empty
+    // fixed <div>s in <body>, outside the page: only their box matters; they
+    // were left out, so in canvas mode a morph showed no liquid at all).
+    if (single) return single.root.contains(e.el) || e.el.dataset.glassMorphShape !== undefined;
     const p = placement(e.id);
     const idx = layerIndex(p.layer);
     return idx <= myIndex && hosts.has(p.layer) && (!layers || layers.includes(p.layer));
@@ -410,9 +413,13 @@ function GlassWorld({ layer, layers, pinned, onReady, single = null }) {
         channel: members[0].channel,
         layer: members[0].layer,
         setBuffer(tex, lodScale) {
-          l.mat.uniforms.uBuffer.value = tex;
-          const blur = members[0].p.blur;
-          l.mat.uniforms.uLod.value = blur > 0 ? Math.max(0, Math.log2(blur * lodScale)) : 0;
+          const u = l.mat.uniforms;
+          u.uBuffer.value = tex;
+          // Each shape's own frost (mip level).
+          members.slice(0, MAX_LIQUID).forEach((m, i) => {
+            const blur = m.p.blur;
+            u.uShape3.value[i].x = blur > 0 ? Math.max(0, Math.log2(blur * lodScale)) : 0;
+          });
         },
       });
     }
@@ -491,6 +498,7 @@ function GlassWorld({ layer, layers, pinned, onReady, single = null }) {
     // once loaded — "auto" otherwise leaves the site's real background
     // visible; see pageBackground.js).
     const lodScale = bufDpr * bufScale;
+    const smoothBlur = getGlobal().blur === 'smooth';
 
     // --- "Everything below" cache ------------------------------------------
     // A floating / top / dialog canvas first redraws everything under its
@@ -565,6 +573,18 @@ function GlassWorld({ layer, layers, pinned, onReady, single = null }) {
         gl.render(pass.type === 'snapshot' ? kit.snapScene : kit.underScene, pass.type === 'snapshot' ? camera : kit.quadCam);
         [src, dst] = [dst, src];
         return;
+      }
+      // Smooth frost (global.blur "smooth"): smooth the buffer's mip levels
+      // this stratum's frostiest glass reads, before it reads them.
+      if (smoothBlur) {
+        let maxLod = 0;
+        for (const c of pass.ctls) {
+          for (const m of c.members || [c]) {
+            const blur = m.p?.blur ?? 0;
+            if (blur > 0) maxLod = Math.max(maxLod, Math.log2(blur * lodScale));
+          }
+        }
+        kit.smoothMips(gl, src, maxLod);
       }
       for (const c of pass.ctls) c.setBuffer(src.texture, lodScale);
       // Auto text: queue a read of exactly what this stratum refracts (only
@@ -924,6 +944,9 @@ function GlassMesh({ entry, controllers, sharedTexture, canvasLayer, pageMode, p
         tint: a.from,
         op: a.op,
         glow: a.glow,
+        rim: a.rim,
+        border: borderRgb,
+        shadow: shadowRgb,
         px: r.left + pointer.x * r.width,
         py: -(r.top + pointer.y * r.height),
       };
@@ -938,6 +961,7 @@ function GlassMesh({ entry, controllers, sharedTexture, canvasLayer, pageMode, p
     const mu = mat.current?.uniforms;
     if (mu?.glassSat) {
       mu.glassSat.value = p.saturation;
+      mu.glassLinear.value = blendLinear() ? 1 : 0;
       mu.glassBright.value = p.brightness;
       mu.glassMinify.value = 1 / (1 - p.minify);
       mu.glassLiveMinify.value = liveMatch ? 1 : 0;
@@ -975,6 +999,7 @@ function GlassMesh({ entry, controllers, sharedTexture, canvasLayer, pageMode, p
     u.uInner.value = p.innerGlow;
     u.uLight.value.copy(lightDir(p.lightAngle));
     u.uGlow.value = a.glow;
+    u.uLinear.value = blendLinear() ? 1 : 0;
     u.uPointer.value.set(pointer.x, 1 - pointer.y);
     u.uBorderW.value = p.borderWidth;
     u.uBorderOp.value = p.borderOpacity;
@@ -1078,6 +1103,7 @@ function patchMaterial(material, samples) {
   material.uniforms.glassHalf = { value: new THREE.Vector2(1, 1) };
   material.uniforms.glassRad = { value: 0 };
   material.uniforms.glassTargetPx = { value: new THREE.Vector2(1, 1) };
+  material.uniforms.glassLinear = { value: 0 }; // global.blend "linear": saturate in linear light
   const original = material.onBeforeCompile;
   material.onBeforeCompile = (shader, renderer) => {
     original(shader, renderer); // drei's own changes (adds our uniforms too)
@@ -1087,8 +1113,9 @@ function patchMaterial(material, samples) {
         'uniform sampler2D buffer;',
         'uniform sampler2D buffer;\nuniform float blurLod;\nuniform float glassSat;\nuniform float glassBright;\nuniform vec3 glassCenter;\nuniform float glassMinify;' +
           `\nuniform vec4 glassRipples[${MAX_RIPPLES}];\nuniform float glassRippleWave;\nuniform float glassRippleAmp;\nuniform vec2 glassPxUv;` +
-          '\nuniform float glassLiveMinify;\nuniform vec2 glassHalf;\nuniform float glassRad;\nuniform vec2 glassTargetPx;' +
-          GLSL_LIVE_MINIFY
+          '\nuniform float glassLiveMinify;\nuniform vec2 glassHalf;\nuniform float glassRad;\nuniform vec2 glassTargetPx;\nuniform float glassLinear;' +
+          GLSL_LIVE_MINIFY +
+          GLSL_LINEAR
       )
       .replace(
         'return texture2D(buffer, fragCoord.xy);',
@@ -1132,8 +1159,10 @@ function patchMaterial(material, samples) {
             crest_ = max(crest_, max(wave_, 0.0) * min(1.0, rp_.w / glassRippleAmp) * 0.55);
           }
           vec4 s_ = textureLod(buffer, uv_, blurLod);
+          s_.rgb = glassLin(s_.rgb, glassLinear);
           s_.rgb = mix(s_.rgb, vec3(1.0), crest_);
           s_.rgb = mix(vec3(dot(s_.rgb, vec3(0.2126, 0.7152, 0.0722))), s_.rgb, glassSat) * glassBright;
+          s_.rgb = glassEnc(s_.rgb, glassLinear);
           return s_;
         }`
       );
@@ -1175,6 +1204,7 @@ function makeTintMaterial() {
       uBorderCol: { value: new THREE.Vector3(1, 1, 1) },
       uLive: { value: 0 }, // canvas mode: light the rim like live (SVG) glass
       uBevel: { value: 12 },
+      uLinear: { value: 0 }, // global.blend "linear": mix light + border in linear light
     },
     vertexShader: /* glsl */ `
       #include <clipping_planes_pars_vertex>
@@ -1194,8 +1224,10 @@ function makeTintMaterial() {
       uniform float uRadius, uRim, uRimWidth, uInner, uGlow, uBorderW, uBorderOp, uLive, uBevel;
       uniform vec2 uLight, uPointer;
       uniform vec3 uBorderCol;
+      uniform float uLinear;
       varying vec2 vUv;
       ${GLSL_SHAPES}
+      ${GLSL_LINEAR}
       void main() {
         #include <clipping_planes_fragment>
         // CSS linear-gradient angle: 0deg = towards the top, 90deg = right.
@@ -1219,6 +1251,7 @@ function makeTintMaterial() {
         vec2 gp = (vUv - uPointer) * uSize;
         w = clamp(w + uGlow * exp(-dot(gp, gp) / (gr * gr)), 0.0, 1.0);
         float outA = 1.0 - (1.0 - a) * (1.0 - w);
+        col = glassLin(col, uLinear);
         col = (vec3(1.0) * w + col * a * (1.0 - w)) / max(outA, 1e-4);
         a = outA;
 
@@ -1227,9 +1260,10 @@ function makeTintMaterial() {
           float band = 1.0 - smoothstep(uBorderW - 0.5, uBorderW + 0.5, -d);
           float ba = uBorderOp * band;
           float bA = 1.0 - (1.0 - a) * (1.0 - ba);
-          col = (uBorderCol * ba + col * a * (1.0 - ba)) / max(bA, 1e-4);
+          col = (glassLin(uBorderCol, uLinear) * ba + col * a * (1.0 - ba)) / max(bA, 1e-4);
           a = bA;
         }
+        col = glassEnc(col, uLinear);
 
         if (uDebug > 0.5) {
           vec2 e = min(vUv, 1.0 - vUv) * uSize;
@@ -1277,11 +1311,13 @@ function makeShadowMaterial() {
       uniform vec3 uColor;
       varying vec2 vUv;
       ${GLSL_SHAPES}
+      ${GLSL_SHADOW}
       void main() {
         #include <clipping_planes_fragment>
         vec2 p = (vUv - 0.5) * uSize;
-        float ds = sdRoundRect(p - uOffset, uHalf + uSpread, max(uRadius + uSpread, 0.0));
-        float a = uOpacity * (1.0 - smoothstep(-uBlur * 0.5, uBlur * 0.5 + 0.75, ds));
+        // CSS box-shadow: the box moved by the offset, grown by the spread,
+        // blurred by a Gaussian of σ = blur / 2.
+        float a = uOpacity * glassBoxShadow(p - uOffset, max(uHalf + uSpread, vec2(0.0)), max(uRadius + uSpread, 0.0), uBlur * 0.5);
         // Like CSS box-shadow: nothing under the glass itself.
         a *= smoothstep(-0.5, 0.5, sdRoundRect(p, uHalf, uRadius));
         if (a <= 0.001) discard;
@@ -1344,6 +1380,74 @@ const GLSL_LIVE_MINIFY = /* glsl */ `
 `;
 
 // --- Shared GLSL: rounded-rectangle distance field + white light ---------------------------
+// --- Shared GLSL: linear light (global.blend "linear") ------------------------------------
+/**
+ * Colours are sRGB values everywhere (the page, tints, the buffers). With
+ * global.blend "linear" the shaders MIX them in linear light instead —
+ * decode, mix, encode — which is how light actually adds up: a white rim over
+ * a dark tint stays brighter, frost keeps small bright spots glowing instead
+ * of greying them. (gamma 2.2 ≈ sRGB.) What the GPU blends itself — a slab's
+ * tint layer laid over the refracted page — stays sRGB: WebGL can't blend
+ * onto the screen in linear light without an extra full-screen pass.
+ */
+const GLSL_LINEAR = /* glsl */ `
+  vec3 glassLin(vec3 c, float on) { return on > 0.5 ? pow(max(c, vec3(0.0)), vec3(2.2)) : c; }
+  vec3 glassEnc(vec3 c, float on) { return on > 0.5 ? pow(max(c, vec3(0.0)), vec3(1.0 / 2.2)) : c; }
+`;
+
+// --- Shared GLSL: Gaussian shadows, like CSS box-shadow -----------------------------------
+/**
+ * CSS box-shadow blurs the shadow shape with a Gaussian whose σ is HALF the
+ * blur radius. glassBoxShadow is the exact Gaussian blur of a rounded
+ * rectangle: erf (closed form) across x, a few samples across y — the
+ * technique from Evan Wallace's "Fast Rounded Rectangle Shadows" (2015),
+ * written out here. glassEdgeShadow is the same Gaussian falloff across a
+ * distance field's edge (morph glass: any melted shape).
+ * The old shadow was a straight ramp over the blur width — visibly harder
+ * and shorter than the CSS / live-glass shadow of the same settings.
+ */
+const GLSL_SHADOW = /* glsl */ `
+  // erf, vector form (Abramowitz–Stegun 7.1.27, max error ~5e-4).
+  vec2 glassErf2(vec2 x) {
+    vec2 s = sign(x);
+    vec2 a = abs(x);
+    vec2 t = 1.0 + (0.278393 + (0.230389 + 0.078108 * (a * a)) * a) * a;
+    t *= t;
+    return s - s / (t * t);
+  }
+  float glassErf(float x) { return glassErf2(vec2(x, 0.0)).x; }
+  // Coverage across x of the rounded box (half size h, corner r) at height y, blurred by sigma.
+  float glassShadowX(float x, float y, float sigma, float r, vec2 h) {
+    float dy = min(h.y - r - abs(y), 0.0);
+    float edge = h.x - r + sqrt(max(0.0, r * r - dy * dy));
+    vec2 i = 0.5 + 0.5 * glassErf2((x + vec2(-edge, edge)) * (0.70710678 / sigma));
+    return i.y - i.x;
+  }
+  // Shadow (0–1) at p of a rounded box centred at 0 (half size h, corner r), Gaussian sigma.
+  float glassBoxShadow(vec2 p, vec2 h, float r, float sigma) {
+    r = min(r, min(h.x, h.y));
+    if (sigma < 0.01) return 1.0 - clamp(sdRoundRect(p, h, r) + 0.5, 0.0, 1.0);
+    float lo = p.y - h.y;
+    float hi = p.y + h.y;
+    float y0 = clamp(-3.0 * sigma, lo, hi);
+    float y1 = clamp(3.0 * sigma, lo, hi);
+    float stepY = (y1 - y0) / 4.0;
+    float y = y0 + stepY * 0.5;
+    float v = 0.0;
+    for (int i = 0; i < 4; i++) {
+      float g = exp(-(y * y) / (2.0 * sigma * sigma)) / (2.50662827 * sigma);
+      v += glassShadowX(p.x, p.y - y, sigma, r, h) * g * stepY;
+      y += stepY;
+    }
+    return v;
+  }
+  // Gaussian falloff across a distance field's edge (d > 0 outside).
+  float glassEdgeShadow(float d, float sigma) {
+    if (sigma < 0.01) return 1.0 - clamp(d + 0.5, 0.0, 1.0);
+    return 0.5 - 0.5 * glassErf(d * 0.70710678 / sigma);
+  }
+`;
+
 const GLSL_SHAPES = /* glsl */ `
   // Signed distance to a rounded rectangle (half-size b, radius r): ≤ 0 inside.
   float sdRoundRect(vec2 p, vec2 b, float r) {
@@ -1417,6 +1521,9 @@ function liveBendMatch(ior) {
   return Math.max(1, ((ior - 1) * 4) / Math.sqrt(1 - 1 / (ior * ior)));
 }
 
+/** global.blend "linear": mix colours in linear light (see GLSL_LINEAR). */
+const blendLinear = () => getGlobal().blend === 'linear';
+
 /** CSS-style angle (0 = top, 90 = right, −45 = top-left) → direction (y up). */
 const lightVec = new THREE.Vector2();
 function lightDir(deg) {
@@ -1430,8 +1537,11 @@ function lightDir(deg) {
  * within morphRadius melt together, "smooth minimum"), then does the glass
  * itself in the shader: the squircle rim bends the buffer behind (with
  * chromatic aberration), frost = buffer mip level, saturation/brightness,
- * the tint (blended between the shapes), rim light and press glow.
- * Same look as the drei slabs, but able to merge.
+ * the tint, reflection, rim light, inner glow, press glow, border and drop
+ * shadow — each shape's OWN settings, blended between the shapes by
+ * closeness (one morph group can mix looks; melted shapes fade between
+ * them). Bevel, melt radius, chromatic aberration, rim width and light angle
+ * stay group-wide. Same look as the drei slabs, but able to merge.
  */
 function makeLiquidMaterial() {
   return new THREE.ShaderMaterial({
@@ -1444,17 +1554,19 @@ function makeLiquidMaterial() {
       uShape2: { value: Array.from({ length: MAX_LIQUID }, () => new THREE.Vector4()) }, // r, tintOpacity, glow, 0
       uGlowAt: { value: Array.from({ length: MAX_LIQUID }, () => new THREE.Vector2()) },
       uTintCol: { value: Array.from({ length: MAX_LIQUID }, () => new THREE.Vector3(1, 1, 1)) },
+      // Each shape's OWN look, blended between the shapes like the tint
+      // (morph glass used to take all of this from its first shape):
+      uShape3: { value: Array.from({ length: MAX_LIQUID }, () => new THREE.Vector4(0, 1, 1, 0)) }, // frost lod, saturation, brightness, bend (px)
+      uShape4: { value: Array.from({ length: MAX_LIQUID }, () => new THREE.Vector4()) }, // rimLight, innerGlow, borderWidth, reflection
+      uBorder: { value: Array.from({ length: MAX_LIQUID }, () => new THREE.Vector4(1, 1, 1, 0)) }, // border rgb, opacity
+      uShadowC: { value: Array.from({ length: MAX_LIQUID }, () => new THREE.Vector4(0, 0, 0, 0)) }, // shadow rgb, opacity
+      uShadowG: { value: Array.from({ length: MAX_LIQUID }, () => new THREE.Vector4()) }, // shadow offset x, y (y up), blur, spread
       uCount: { value: 0 },
+      uLinear: { value: 0 }, // global.blend "linear": every mix below in linear light
       uK: { value: 24 },
       uBevel: { value: 12 },
-      uBend: { value: 10 },
       uCA: { value: 0.05 },
-      uLod: { value: 0 },
-      uSat: { value: 1.6 },
-      uBright: { value: 1 },
-      uRim: { value: 0.6 },
       uRimWidth: { value: 1.25 },
-      uInner: { value: 0.15 },
       uLight: { value: new THREE.Vector2(-0.707, 0.707) },
       uView: { value: new THREE.Vector2(1, 1) },
       uViewTop: { value: 0 }, // world y of the canvas top (page-anchored canvases)
@@ -1474,13 +1586,21 @@ function makeLiquidMaterial() {
       uniform vec4 uShape2[MAXS];
       uniform vec2 uGlowAt[MAXS];
       uniform vec3 uTintCol[MAXS];
+      uniform vec4 uShape3[MAXS];
+      uniform vec4 uShape4[MAXS];
+      uniform vec4 uBorder[MAXS];
+      uniform vec4 uShadowC[MAXS];
+      uniform vec4 uShadowG[MAXS];
       uniform int uCount;
-      uniform float uK, uBevel, uBend, uCA, uLod, uSat, uBright, uRim, uRimWidth, uInner;
+      uniform float uLinear;
+      uniform float uK, uBevel, uCA, uRimWidth;
       uniform vec2 uLight, uView;
       uniform float uViewTop;
       uniform sampler2D uBuffer;
       varying vec2 vWorld;
       ${GLSL_SHAPES}
+      ${GLSL_SHADOW}
+      ${GLSL_LINEAR}
       float smin(float a, float b, float k) {
         float h = max(k - abs(a - b), 0.0) / k;
         return min(a, b) - h * h * k * 0.25;
@@ -1500,11 +1620,53 @@ function makeLiquidMaterial() {
         float s = pow(x, 3.0) / pow(b4, 0.75);
         return s / sqrt(1.0 + s * s);
       }
-      vec3 sat(vec3 c) { return mix(vec3(dot(c, vec3(0.2126, 0.7152, 0.0722))), c, uSat) * uBright; }
       void main() {
         vec2 p = vWorld;
         float d = field(p);
-        if (d > 1.0) discard;
+
+        // Each shape's weight here (by closeness — what the tint always
+        // used): every per-shape setting below is blended with it, so a
+        // morph group can mix looks and melted shapes fade between them.
+        float wsum = 0.0;
+        vec4 L3 = vec4(0.0); vec4 L4 = vec4(0.0);
+        vec3 tc = vec3(0.0); float top = 0.0; float glow = 0.0; float minSide = 0.0;
+        vec4 bc = vec4(0.0); vec4 sc = vec4(0.0); vec4 sg = vec4(0.0);
+        for (int i = 0; i < MAXS; i++) {
+          if (i >= uCount) break;
+          float di = sdRoundRect(p - uShapes[i].xy, uShapes[i].zw, uShape2[i].x);
+          float w = exp(-max(di, 0.0) * 3.0 / max(uK, 1.0));
+          wsum += w;
+          L3 += uShape3[i] * w;
+          L4 += uShape4[i] * w;
+          bc += uBorder[i] * w;
+          sc += uShadowC[i] * w;
+          sg += uShadowG[i] * w;
+          minSide += 2.0 * min(uShapes[i].z, uShapes[i].w) * w;
+          tc += uTintCol[i] * uShape2[i].y * w;
+          top += uShape2[i].y * w;
+          // Press glow: the same size as on regular glass (tint shader:
+          // max(short side, 0.35 × long side)) — it used 1.4 × the half
+          // size, about twice as wide.
+          vec2 gp = p - uGlowAt[i];
+          float gr = max(2.0 * min(uShapes[i].z, uShapes[i].w), 0.7 * max(uShapes[i].z, uShapes[i].w));
+          glow += uShape2[i].z * w * exp(-dot(gp, gp) / (gr * gr));
+        }
+        float iw = 1.0 / max(wsum, 1e-4);
+        L3 *= iw; L4 *= iw; bc *= iw; sc *= iw; sg *= iw; minSide *= iw;
+
+        // Drop shadow (like regular glass's shadow mesh: only outside the
+        // glass): the melted shape moved by the offset, grown by the
+        // spread, softened over the blur.
+        float sa = 0.0;
+        if (sc.a > 0.0 && d > -0.5) {
+          float ds = field(p - sg.xy) - sg.w;
+          sa = sc.a * glassEdgeShadow(ds, sg.z * 0.5) * smoothstep(-0.5, 0.5, d);
+        }
+        if (d > 1.0) {
+          if (sa <= 0.001) discard;
+          gl_FragColor = vec4(sc.rgb, sa); // (one colour: nothing to mix)
+          return;
+        }
         float aa = clamp(0.5 - d, 0.0, 1.0);
         // The normal (4 more passes over every shape) is only needed near the
         // edge: deeper in than the bevel the refraction is zero (tilt(0) = 0),
@@ -1519,35 +1681,43 @@ function makeLiquidMaterial() {
 
         // Refraction: look inwards across the rim, more at the very edge.
         float x = clamp(1.0 + d / max(uBevel, 0.5), 0.0, 1.0);
-        vec2 off = -n * uBend * tilt(x) / uView;
+        float tx = tilt(x);
+        vec2 off = -n * L3.w * tx / uView;
         vec2 uv = vec2(p.x / uView.x, 1.0 + (p.y - uViewTop) / uView.y);
         vec3 col = vec3(
-          textureLod(uBuffer, uv + off * (1.0 + 2.0 * uCA), uLod).r,
-          textureLod(uBuffer, uv + off * (1.0 + uCA), uLod).g,
-          textureLod(uBuffer, uv + off, uLod).b);
-        col = sat(col);
+          textureLod(uBuffer, uv + off * (1.0 + 2.0 * uCA), L3.x).r,
+          textureLod(uBuffer, uv + off * (1.0 + uCA), L3.x).g,
+          textureLod(uBuffer, uv + off, L3.x).b);
+        col = glassLin(col, uLinear);
+        bc.rgb = glassLin(bc.rgb, uLinear);
+        sc.rgb = glassLin(sc.rgb, uLinear);
+        col = mix(vec3(dot(col, vec3(0.2126, 0.7152, 0.0722))), col, L3.y) * L3.z;
 
-        // Tint + press glow, blended between the shapes by closeness.
-        vec3 tc = vec3(0.0); float top = 0.0; float wsum = 0.0; float glow = 0.0;
-        for (int i = 0; i < MAXS; i++) {
-          if (i >= uCount) break;
-          float di = sdRoundRect(p - uShapes[i].xy, uShapes[i].zw, uShape2[i].x);
-          float w = exp(-max(di, 0.0) * 3.0 / max(uK, 1.0));
-          tc += uTintCol[i] * uShape2[i].y * w;
-          top += uShape2[i].y * w;
-          wsum += w;
-          vec2 gp = p - uGlowAt[i];
-          float gr = max(uShapes[i].z, uShapes[i].w) * 1.4;
-          glow += uShape2[i].z * w * exp(-dot(gp, gp) / (gr * gr));
-        }
-        float op = top / max(wsum, 1e-4);
-        tc /= max(top, 1e-4);
+        // Tint, blended between the shapes.
+        float op = top * iw;
+        tc = glassLin(tc / max(top, 1e-4), uLinear);
         col = mix(col, tc, op);
 
-        float minSide = 2.0 * min(uShapes[0].z, uShapes[0].w);
-        float wl = clamp(whiteLight(d, n, uLight, uRim, uRimWidth, uInner, minSide) + glow / max(wsum, 1e-4), 0.0, 1.0);
+        // Reflection (regular glass: the studio environment, strongest where
+        // the rim turns away — fresnel): a soft white sheen across the face
+        // and more on the rim, brighter on edges facing up.
+        float refl = L4.w * (0.05 + 0.45 * tx * tx) * (0.65 + 0.35 * n.y);
+        col = mix(col, vec3(1.0), clamp(refl, 0.0, 1.0));
+
+        float wl = clamp(whiteLight(d, n, uLight, L4.x, uRimWidth, L4.y, minSide) + glow * iw, 0.0, 1.0);
         col = mix(col, vec3(1.0), wl);
-        gl_FragColor = vec4(col, aa);
+
+        // Border: a hairline just inside the edge (like the tint shader).
+        if (L4.z > 0.0 && bc.a > 0.0) {
+          float band = 1.0 - smoothstep(L4.z - 0.5, L4.z + 0.5, -d);
+          col = mix(col, bc.rgb, bc.a * band);
+        }
+
+        // Glass over its own shadow's edge (anti-aliased rim).
+        float outA = aa + sa * (1.0 - aa);
+        col = (col * aa + sc.rgb * sa * (1.0 - aa)) / max(outA, 1e-4);
+        col = glassEnc(col, uLinear);
+        gl_FragColor = vec4(col, outA);
       }
     `,
   });
@@ -1558,6 +1728,7 @@ function updateLiquid(l, members, size, viewTop = 0) {
   const u = l.mat.uniforms;
   const p = members[0].p; // the group's look comes from its first element
   const n = Math.min(members.length, MAX_LIQUID);
+  let shadowPad = 0;
   let x0 = Infinity;
   let y0 = Infinity;
   let x1 = -Infinity;
@@ -1568,26 +1739,32 @@ function updateLiquid(l, members, size, viewTop = 0) {
     u.uShape2.value[i].set(s.r, s.op, s.glow, 0);
     u.uGlowAt.value[i].set(s.px, s.py);
     u.uTintCol.value[i].copy(s.tint);
+    // This shape's own look (blended between shapes in the shader).
+    const q = members[i].p;
+    const lod = u.uShape3.value[i].x; // (set by setBuffer: needs the buffer's scale)
+    u.uShape3.value[i].set(lod, q.saturation, q.brightness, q.thickness * (q.ior - 1) * 1.5);
+    u.uShape4.value[i].set(s.rim ?? q.rimLight, q.innerGlow, q.borderOpacity > 0 ? q.borderWidth : 0, q.reflection);
+    u.uBorder.value[i].set(s.border[0], s.border[1], s.border[2], q.borderOpacity);
+    u.uShadowC.value[i].set(s.shadow[0], s.shadow[1], s.shadow[2], q.shadowOpacity);
+    u.uShadowG.value[i].set(q.shadowX, -q.shadowY, q.shadowBlur, q.shadowSpread);
+    const reach = q.shadowOpacity > 0 ? q.shadowBlur * 1.5 + Math.max(Math.abs(q.shadowX), Math.abs(q.shadowY)) + Math.max(q.shadowSpread, 0) + 2 : 0;
+    shadowPad = Math.max(shadowPad, reach);
     x0 = Math.min(x0, s.cx - s.hw);
     x1 = Math.max(x1, s.cx + s.hw);
     y0 = Math.min(y0, s.cy - s.hh);
     y1 = Math.max(y1, s.cy + s.hh);
   }
   u.uCount.value = n;
+  u.uLinear.value = blendLinear() ? 1 : 0;
   u.uK.value = p.morphRadius;
   u.uBevel.value = p.bevel;
-  u.uBend.value = p.thickness * (p.ior - 1) * 1.5;
   u.uCA.value = p.chromaticAberration * 3;
-  u.uSat.value = p.saturation;
-  u.uBright.value = p.brightness;
-  u.uRim.value = p.rimLight;
   u.uRimWidth.value = p.rimWidth;
-  u.uInner.value = p.innerGlow;
   u.uLight.value.copy(lightDir(p.lightAngle));
   u.uView.value.set(size.width, size.height);
   u.uViewTop.value = viewTop;
-  // Cover all shapes plus the reach of the melt.
-  const pad = p.morphRadius + 4;
+  // Cover all shapes plus the reach of the melt and of the drop shadows.
+  const pad = p.morphRadius + 4 + shadowPad;
   l.mesh.scale.set(x1 - x0 + pad * 2, y1 - y0 + pad * 2, 1);
   l.mesh.position.set((x0 + x1) / 2, (y0 + y1) / 2, 2);
   l.mesh.layers.set(members[0].channel);
@@ -1944,6 +2121,40 @@ function makeKit(paintsImage) {
   const blitScene = new THREE.Scene();
   blitScene.add(new THREE.Mesh(quad, blitMat));
 
+  // Smooth frost (global.blur "smooth" — see smoothMips below): one level of
+  // a dual-Kawase downsample. The output pixel sits on the corner of 4 source
+  // texels; 4 bilinear taps one source texel out diagonally + the centre
+  // (×4) cover a 4×4 footprint with a tent-like weight, where the GPU's own
+  // mipmaps average just the 2×2 under it (a box: blocky, and it shimmers as
+  // the page moves under the glass).
+  const downMat = new THREE.ShaderMaterial({
+    uniforms: { tMap: { value: null }, uLod: { value: 0 }, uTexel: { value: new THREE.Vector2() }, uLinear: { value: 0 } },
+    vertexShader: fullscreenVertexShader,
+    fragmentShader: `
+      uniform sampler2D tMap; uniform float uLod; uniform vec2 uTexel; uniform float uLinear; varying vec2 vUv;
+      ${GLSL_LINEAR}
+      // (global.blend "linear": averaged in linear light — bright spots
+      // keep glowing through the frost instead of turning grey)
+      vec4 tap(vec2 uv) { vec4 c = textureLod(tMap, uv, uLod); return vec4(glassLin(c.rgb, uLinear), c.a); }
+      void main() {
+        vec4 c = tap(vUv) * 4.0;
+        c += tap(vUv + vec2(-uTexel.x, -uTexel.y));
+        c += tap(vUv + vec2( uTexel.x, -uTexel.y));
+        c += tap(vUv + vec2(-uTexel.x,  uTexel.y));
+        c += tap(vUv + vec2( uTexel.x,  uTexel.y));
+        c /= 8.0;
+        gl_FragColor = vec4(glassEnc(c.rgb, uLinear), c.a);
+      }`,
+    blending: THREE.NoBlending,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const downScene = new THREE.Scene();
+  downScene.add(new THREE.Mesh(quad, downMat));
+  // Scratch target each smooth level is drawn into before it's copied into
+  // the buffer's mip level (half the buffer size: big enough for level 1).
+  const downRT = new THREE.WebGLRenderTarget(1, 1, { depthBuffer: false, generateMipmaps: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
+
   // Page snapshot (HTML content) as a textured rectangle in CSS pixels.
   // A new texture per picture: three.js allocates a texture's storage once,
   // so re-using it for a picture of a different size would fail to upload.
@@ -2034,6 +2245,41 @@ function makeKit(paintsImage) {
       gl.setRenderTarget(to);
       gl.render(blitScene, quadCam);
     },
+    /**
+     * Smooth frost: rebuild a buffer's mip levels 1…N (N = the deepest level
+     * the glass about to read it uses, +1 for the blend between two levels)
+     * with the dual-Kawase downsample above, each from the level before —
+     * instead of the GPU's box-filtered mipmaps. The glass still reads ONE
+     * level (blurLod) per sample, so it costs only these few small passes
+     * (all of them together ≈ a third of one full-size pass).
+     */
+    smoothMips(gl, rt, maxLod) {
+      if (!(maxLod > 0)) return;
+      const w = rt.width;
+      const h = rt.height;
+      const levels = Math.floor(Math.log2(Math.max(w, h)));
+      const n = Math.min(levels, Math.ceil(maxLod) + 1, 8);
+      if (n < 1) return;
+      const hw = Math.max(1, Math.ceil(w / 2));
+      const hh = Math.max(1, Math.ceil(h / 2));
+      if (downRT.width < hw || downRT.height < hh) downRT.setSize(hw, hh);
+      downMat.uniforms.tMap.value = rt.texture;
+      downMat.uniforms.uLinear.value = blendLinear() ? 1 : 0;
+      for (let lv = 1; lv <= n; lv++) {
+        const lw = Math.max(1, Math.floor(w / 2 ** lv));
+        const lh = Math.max(1, Math.floor(h / 2 ** lv));
+        const sw = Math.max(1, Math.floor(w / 2 ** (lv - 1)));
+        const sh = Math.max(1, Math.floor(h / 2 ** (lv - 1)));
+        downMat.uniforms.uLod.value = lv - 1;
+        downMat.uniforms.uTexel.value.set(1 / sw, 1 / sh);
+        downRT.viewport.set(0, 0, lw, lh);
+        gl.setRenderTarget(downRT);
+        gl.render(downScene, quadCam);
+        // (copies the bound framebuffer — downRT — into the buffer's level lv)
+        gl.copyFramebufferToTexture(rt.texture, null, lv);
+      }
+      downRT.viewport.set(0, 0, downRT.width, downRT.height);
+    },
     /** Place the latest page picture, slid by the scroll since it was taken. */
     updateSnapshot() {
       if (!snapshot.canvas) return false;
@@ -2074,6 +2320,8 @@ function makeKit(paintsImage) {
     dispose() {
       bufA.dispose();
       bufB.dispose();
+      downRT.dispose();
+      downMat.dispose();
       below.rt.dispose();
       quad.dispose();
       bgMat.dispose();

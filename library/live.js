@@ -35,7 +35,14 @@
  *           setImageBackdrop); otherwise, with background "auto", it goes
  *           live too, so it refracts the site's real background (gradients,
  *           images) instead of a flat colour.
- *   live  → always live where supported.
+ *           In canvas mode (global.backdrop "canvas") "auto" is WebGL —
+ *           that glass already refracts the live page.
+ *   live  → always live where supported. In canvas mode too (a group's
+ *           "canvas": { "sampler": "live" }): it's then painted into the
+ *           page's own picture (pageCanvas.js) and bends ONLY the page's
+ *           HTML — not the background or glass the canvas draws under the
+ *           page (no frost / colour from those). So nothing is live there by
+ *           default; the top bar is WebGL, which sees everything.
  *   webgl → never live.
  * Glass INSIDE a live element (buttons on a dock card, chips in the header)
  * is live too, with its own filter sized to its own shape (it bends the
@@ -50,7 +57,9 @@
 import { getGlobal, resolveGlass, subscribeConfig } from './config';
 import { isExactBackground, isImageBackdrop, subscribeImageBackdrop } from './pageBackground';
 import { allEntries, getEntry, placement, requestRender, subscribeProps, subscribeStructure } from './registry';
-import { AUTO_FALLBACK_RADIUS, rimTilt } from './rim'; // (not shapes.js: that imports three.js)
+import { AUTO_FALLBACK_RADIUS } from './rim'; // (not shapes.js: that imports three.js)
+import { mapKey, requestMap } from './liveMaps';
+import { isCanvasMode, requestPagePaint } from './pageCanvas';
 import { MAX_RIPPLES, activeRipples, subscribeRipples } from './ripple';
 
 /** Can this browser bend the live backdrop with an SVG filter? (Chromium only) */
@@ -113,13 +122,33 @@ export function stopLive() {
  * lens…) only appeared after switching tabs.
  */
 let syncEverything = false;
+let micro = false; // a same-frame flush of `dirty` is queued
 const dirty = new Set(); // entry ids to re-sync
+function flushSome() {
+  micro = false;
+  if (!running || syncEverything) return; // (the full sync next frame covers them)
+  const ids = [...dirty];
+  dirty.clear();
+  syncSome(ids);
+}
 export function scheduleLiveSync(target) {
   if (!running) return;
   const id = typeof target === 'number' ? target : target?.nodeType === 1 ? Number(target.dataset.glassId) : NaN;
   if (target == null) syncEverything = true;
-  else if (id) dirty.add(id);
-  else return;
+  else if (id) {
+    dirty.add(id);
+    // One element changed (a knob / lens animating its size or look): sync
+    // it in THIS frame, right after the code that changed it (a microtask
+    // runs before the frame is painted). Waiting for the next animation
+    // frame drew every frame with the previous frame's filter — a pressed
+    // switch knob's first frame showed its flat, rest-state map (green, no
+    // lens) — and kept the bend one frame behind a growing knob.
+    if (!syncEverything && !micro) {
+      micro = true;
+      queueMicrotask(flushSome);
+    }
+    return;
+  } else return;
   if (raf) return;
   raf = requestAnimationFrame(() => {
     raf = 0;
@@ -168,7 +197,11 @@ function modeOf(e, cache) {
     // sits behind the parent), so it falls back to its tint.
     else if (parentMode) mode = p.sampler === 'webgl' ? 'tint' : 'live';
     else if (p.sampler === 'live') mode = 'live';
-    else if (p.sampler === 'auto') {
+    // Canvas mode (global.backdrop "canvas"): the WebGL glass refracts the
+    // live page itself, so "auto" glass stays WebGL; only groups whose
+    // "canvas" block sets "sampler": "live" go live (glass over plain page
+    // HTML — see the header comment); glass inside them follows (above).
+    else if (p.sampler === 'auto' && !isCanvasMode()) {
       const layer = placement(e.id).layer;
       // Base glass over an exact background — a config copy, or the
       // background picture once the base canvas paints it (pageBackground.js
@@ -261,22 +294,48 @@ function apply(e, mode) {
   const ripple = p.ripple > 0 ? { amp: p.ripple, wave: p.rippleWavelength } : null;
   const key = `${w}|${h}|${radius}|${rim}|${strength.toFixed(1)}|${ca.toFixed(3)}|${p.profile}|${p.minify.toFixed(3)}|${ripple ? `${ripple.amp}/${ripple.wave}` : '-'}`;
   let f = filters.get(e.id);
-  if (!f || f.key !== key) {
-    if (!f) {
-      const node = document.createElementNS(SVG_NS, 'filter');
-      node.id = id;
-      root().appendChild(node);
-      f = { el: node, key: '' };
-      filters.set(e.id, f);
+  if (!f) {
+    const node = document.createElementNS(SVG_NS, 'filter');
+    node.id = id;
+    root().appendChild(node);
+    f = { el: node, key: '', map: null, mapKey: '', wantMap: '' };
+    filters.set(e.id, f);
+  }
+  if (f.key !== key) {
+    // The displacement map (liveMaps.js): cached per shape + size, else made
+    // in a worker. Until a new one arrives the filter keeps its previous map,
+    // stretched to the new size (a resizing knob / lens never flickers); then
+    // this element is synced again and picks it from the cache.
+    const params = { w, h, radius, rim, profile: p.profile, strength, minify: p.minify };
+    const mk = mapKey(params);
+    f.wantMap = mk;
+    const map =
+      f.mapKey === mk
+        ? f.map
+        : requestMap(params, () => {
+            const g = filters.get(e.id);
+            if (g && g.wantMap === mk) {
+              g.key = ''; // rebuild with the new map
+              scheduleLiveSync(e.id);
+            }
+          });
+    if (map) {
+      f.map = map;
+      f.mapKey = mk;
     }
-    f.ripple = buildFilter(f.el, { w, h, radius, rim, strength, ca, profile: p.profile, minify: p.minify, ripple });
+    if (f.map) {
+      f.ripple = buildFilter(f.el, { w, h, ca, ripple, map: f.map });
+      if (f.ripple) drawRipples(e.id); // rings already spreading (the element resized mid-ripple)
+      if (isCanvasMode()) requestPagePaint(); // (the filter is outside the page canvas: tell it)
+    }
     f.key = key;
-    if (f.ripple) drawRipples(e.id); // rings already spreading (the element resized mid-ripple)
   }
   // Frost: CSS blur radius ≈ a third of the WebGL "blur" (they then look alike).
+  // (No map yet — the very first one is still being made: frost + tint only.)
   const blur = p.blur > 0 ? `blur(${(p.blur / 3).toFixed(1)}px) ` : '';
   const bright = Math.abs(p.brightness - 1) > 0.001 ? ` brightness(${p.brightness})` : '';
-  setVar(el, '--glass-live-filter', `${blur}url(#${id}) saturate(${Math.round(p.saturation * 100)}%)${bright}`);
+  const bend = f.map ? `url(#${id}) ` : '';
+  setVar(el, '--glass-live-filter', `${blur}${bend}saturate(${Math.round(p.saturation * 100)}%)${bright}`);
 }
 
 const LIVE_VARS = ['--glass-live-radius', '--glass-live-bg', '--glass-live-border', '--glass-live-shadow', '--glass-live-filter'];
@@ -326,12 +385,12 @@ function shapeRadius(p, w, h, el) {
  * before it bends anything (see rippleStages) — then this returns the nodes
  * drawRipples() animates; otherwise null.
  */
-function buildFilter(node, { w, h, radius, rim, strength, ca, profile, minify, ripple }) {
-  // (strength is now baked into the map; `scale` turns it back into px)
-  const { url: map, scale: strength2 } = displacementMap(w, h, radius, rim, profile, strength, minify);
+function buildFilter(node, { w, h, ca, ripple, map: made }) {
+  // (the bend strength is baked into the map; its `scale` turns it back into px)
+  const { url: map, scale: strength2 } = made;
   // Ripples need room in the same map: the bend scale grows by 2 × the ring
   // strength, and the rim map is scaled down to match (same px as before).
-  strength = ripple ? strength2 + 2 * ripple.amp : strength2;
+  const strength = ripple ? strength2 + 2 * ripple.amp : strength2;
   node.setAttribute('x', '0');
   node.setAttribute('y', '0');
   node.setAttribute('width', String(w));
@@ -498,121 +557,10 @@ function drawRipples(id) {
     slot.add.setAttribute('k4', (-0.5 * k3).toFixed(5));
     slot.hl.setAttribute('values', hlMatrix(CREST_LIGHT * Math.min(1, ring.amp / (rp.amp || 1))));
   });
+  if (isCanvasMode()) requestPagePaint(); // (the filter is outside the page canvas: tell it)
 }
 
-/**
- * Displacement map for a rounded rectangle, as px offsets (R = x, G = y):
- *   • the rim bend — flat (no bend) inside, bending more and more towards
- *     the edge across the rim: the same distance-field maths as the WebGL
- *     slab normals (shapes.js), up to `strength` px;
- *   • minify (−0.5–0.5) — the whole lens shows what's behind it bigger
- *     (negative: magnify — read closer to the centre) or smaller
- *     (Apple's switch knob). A live backdrop only covers the element itself,
- *     so the middle is shrunk by 1 − minify and the outer band is squeezed
- *     to reach exactly the element's edge (never past it: past it there is
- *     nothing to read, which showed as jagged edges).
- * Returns the map and the feDisplacementMap scale that turns it back into px.
- *
- * Very large live elements (a full-screen panel) are mapped at a lower
- * resolution — at most MAX_MAP_PIXELS — and the filter stretches the map
- * back over the element (feImage preserveAspectRatio="none"). Without the
- * cap a 4K-sized panel meant ~8 M pixels of JS maths and a huge data URL on
- * every resize. Normal UI (headers, docks, menus) stays at full resolution.
- */
-const MAX_MAP_PIXELS = 1_000_000;
-// Map steps (of 255) the lens map's G middle is raised by — see displacementMap.
-// Measured in desktop Chrome: the lens picture sat 0.0625 × scale too low = 16 steps.
-const MINIFY_Y_NUDGE = 16;
-function displacementMap(fullW, fullH, fullRadius, fullRim, profile, strength, minify = 0) {
-  const k = Math.min(1, Math.sqrt(MAX_MAP_PIXELS / (fullW * fullH)));
-  const w = Math.max(1, Math.round(fullW * k));
-  const h = Math.max(1, Math.round(fullH * k));
-  const radius = fullRadius * k;
-  const rim = Math.max(0.5, fullRim * k);
-  const hx = w / 2 - rim;
-  const hy = h / 2 - rim;
-  const ir = Math.max(0, radius - rim);
-  const half = Math.min(w, h) / 2; // deepest point inside the shape (map px)
-  // minify: content scale (< 1 shrinks; > 1 — negative minify — magnifies)
-  const scaleIn = 1 - Math.min(0.5, Math.max(-0.5, minify));
-  const knee = 0.88 * scaleIn; // up to here: plain r / scaleIn
-  const bend = (r) => {
-    // Magnify: read closer to the centre everywhere (never past the edge, so
-    // nothing outside the element is needed).
-    if (scaleIn > 1) return r / scaleIn;
-    if (scaleIn === 1) return r;
-    if (r < knee) return r / scaleIn;
-    const t = (r - knee) / (1 - knee);
-    return 0.88 + 0.12 * (1 - (1 - t) * (1 - t)); // reaches the edge (1) exactly at the edge
-  };
-  /** Signed distance to a rounded rect (half sizes bx, by, radius rr) + outward normal. */
-  const sdf = (px, py, bx, by, rr) => {
-    const qx = Math.abs(px) - (bx - rr);
-    const qy = Math.abs(py) - (by - rr);
-    const mx = Math.max(qx, 0);
-    const my = Math.max(qy, 0);
-    const out = Math.hypot(mx, my);
-    const d = out + Math.min(Math.max(qx, qy), 0) - rr;
-    let gx = 0;
-    let gy = 0;
-    if (qx > 0 && qy > 0) {
-      gx = (mx / out) * Math.sign(px);
-      gy = (my / out) * Math.sign(py);
-    } else if (qx > qy) gx = Math.sign(px);
-    else gy = Math.sign(py);
-    return { d, gx, gy };
-  };
-  const offs = new Float32Array(w * h * 2);
-  let maxAbs = 0;
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const px = x + 0.5 - w / 2;
-      const py = y + 0.5 - h / 2;
-      // Rim bend (inner rim shape).
-      const a = sdf(px, py, hx, hy, ir);
-      const t = Math.min(1, Math.max(0, a.d / rim));
-      // classic: gentle at the inner edge, strongest outside (original look);
-      // squircle: the WebGL slab's rim curve (shapes.js rimTilt).
-      const s = profile === 'classic' ? t * t : rimTilt(t, profile);
-      let dx = (-a.gx * s * strength) / 2;
-      let dy = (-a.gy * s * strength) / 2;
-      // Minify (outer shape): read further out, by how deep the pixel is.
-      if (scaleIn !== 1) {
-        const o = sdf(px, py, w / 2, h / 2, Math.min(radius, half));
-        const r = Math.min(1, Math.max(0, 1 + o.d / half)); // 0 = deepest, 1 = edge
-        const push = ((bend(r) - r) * half) / k; // px (full size)
-        dx += o.gx * push;
-        dy += o.gy * push;
-      }
-      const i = (y * w + x) * 2;
-      offs[i] = dx;
-      offs[i + 1] = dy;
-      maxAbs = Math.max(maxAbs, Math.abs(dx), Math.abs(dy));
-    }
-  }
-  const c = document.createElement('canvas');
-  c.width = w;
-  c.height = h;
-  const ctx = c.getContext('2d');
-  const img = ctx.createImageData(w, h);
-  // Lens glass (minify ≠ 0, e.g. the pressed switch knob): Chrome on a real
-  // screen reads the map's G "middle" as slightly below 0.5, so the picture
-  // inside the lens sat ~6% of the bend scale too LOW (≈1.25 px on the knob:
-  // a thick band on top, a thin one below). Raising the G middle by
-  // MINIFY_Y_NUDGE map steps moves it back up. The range shrinks by the same
-  // steps so the biggest offsets still fit in 0–255.
-  const nudge = scaleIn !== 1 ? MINIFY_Y_NUDGE : 0;
-  const norm = maxAbs > 0 ? (127 - nudge) / maxAbs : 0;
-  for (let p = 0, i = 0; p < w * h; p++, i += 4) {
-    img.data[i] = 128 + offs[p * 2] * norm;
-    img.data[i + 1] = 128 + nudge + offs[p * 2 + 1] * norm;
-    img.data[i + 2] = 128;
-    img.data[i + 3] = 255;
-  }
-  ctx.putImageData(img, 0, 0);
-  // feDisplacementMap: offset = scale × (C − 0.5), C = byte / 255.
-  return { url: c.toDataURL(), scale: maxAbs > 0 ? (maxAbs * 255) / (127 - nudge) : 0 };
-}
+// (The displacement map itself — rim bend + minify — is made in liveMaps.js.)
 
 /** Rim light + inner glow as inset box-shadows (light from lightAngle). */
 function rimShadow(p) {

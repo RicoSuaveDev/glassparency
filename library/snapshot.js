@@ -216,9 +216,28 @@ let warnedNodeMap = false;
  * It also leaves window-fixed backgrounds and backdrop-filter frost out of
  * the picture (see the loop below for why).
  */
+// Copies whose window-fixed background was stripped in afterClone (this capture).
+let fixedBgCopies = [];
 const hideLeftOut = {
   name: 'dp-glass-hide-left-out',
+  // snapDOM 3.7 inlines every background image AFTER afterClone (its
+  // background pass reads the ORIGINAL's computed style and writes
+  // background-image onto the copy, which replaces our "none !important").
+  // So the window-fixed page photo was back in every picture: floating /
+  // tab-bar WebGL glass refracted the photo from the picture, which slides
+  // with the page — the photo seen through a tab bar moved WITH the bar while
+  // scrolling and only jumped right once a new picture came after the scroll
+  // (measured in Chrome 157: the UI lab's picture was 85% the lake photo).
+  // beforeRender runs after that pass, so the strip is done again there.
+  beforeRender() {
+    for (const copy of fixedBgCopies) {
+      copy.style.setProperty('background', 'none', 'important');
+      copy.style.setProperty('background-image', 'none', 'important');
+    }
+    fixedBgCopies = [];
+  },
   afterClone(ctx) {
+    fixedBgCopies = [];
     const map = ctx.nodeMap;
     if (!(map instanceof Map)) {
       if (!warnedNodeMap) console.warn('glass: snapDOM nodeMap missing (snapDOM changed?) — floating glass is not hidden in page pictures');
@@ -242,6 +261,7 @@ const hideLeftOut = {
       const cs = getComputedStyle(original);
       if (/\bfixed\b/.test(cs.backgroundAttachment)) {
         copy.style.setProperty('background', 'none', 'important');
+        fixedBgCopies.push(copy); // stripped AGAIN in beforeRender (see there)
       }
       // backdrop-filter: snapDOM (3.7+) imitates it by copying EVERYTHING
       // behind the element into the picture once per element that has one —
@@ -432,12 +452,20 @@ export function startSnapshots() {
       // it (an animated lens, knob, progress fill…) changes the picture.
       if (insideFloatingGlass(r.target)) return false;
       if (r.type === 'characterData') return r.oldValue !== r.target.data;
-      if (r.type === 'attributes') return !r.attributeName?.startsWith('data-glass'); // our own bookkeeping
+      if (r.type === 'attributes') {
+        if (r.attributeName?.startsWith('data-glass')) return false; // our own bookkeeping
+        // Only the glass's own CSS variables changed (--glass-text eased by
+        // auto text after each scroll, --gp-css-* of the CSS glass): nothing
+        // visible through refracted glass. Each such step used to start a new
+        // ~300 ms picture — 13 pictures over 8 scrolls in the UI lab.
+        if (r.attributeName === 'style' && onlyGlassVarsChanged(r.oldValue, r.target.getAttribute?.('style'))) return false;
+        return true;
+      }
       return true;
     });
     if (real) scheduleSnapshot();
   });
-  if (root) observer.observe(root, { subtree: true, childList: true, characterData: true, characterDataOldValue: true, attributes: true });
+  if (root) observer.observe(root, { subtree: true, childList: true, characterData: true, characterDataOldValue: true, attributes: true, attributeOldValue: true });
   // Light ↔ dark mode re-colours every element without touching the root's DOM,
   // so the observer above can't see it: retake the picture straight away.
   let shotTheme = getGlassTheme();
@@ -467,6 +495,24 @@ function insideFloatingGlass(n) {
   }
   return false;
 }
+/** Did a style attribute change only in --glass-* / --gp-* custom properties? */
+function onlyGlassVarsChanged(before, after) {
+  const decls = (s) => {
+    const m = new Map();
+    for (const part of String(s || '').split(';')) {
+      const i = part.indexOf(':');
+      if (i > 0) m.set(part.slice(0, i).trim(), part.slice(i + 1).trim());
+    }
+    return m;
+  };
+  const a = decls(before);
+  const b = decls(after);
+  const glassVar = (k) => k.startsWith('--glass-') || k.startsWith('--gp-');
+  for (const k of new Set([...a.keys(), ...b.keys()])) {
+    if (a.get(k) !== b.get(k) && !glassVar(k)) return false;
+  }
+  return true;
+}
 function ownNode(n) {
   const el = n?.nodeType === 1 ? n : n?.parentElement;
   return Boolean(el?.closest?.('[data-glass-host]'));
@@ -489,8 +535,12 @@ export function stopSnapshots() {
   window.removeEventListener('resize', onResize);
 }
 
-function onScroll() {
+function onScroll(ev) {
   lastScrollAt = performance.now();
+  // A scroll BOX moved (its content slid inside the picture) — not the window.
+  // (This used to be "the window is back where the picture was taken",
+  // which is also true after scrolling away and back: a pointless retake.)
+  const boxScrolled = Boolean(ev?.target && ev.target.nodeType === 1 && ev.target !== document.documentElement && ev.target !== document.body);
   // After scrolling stops: retake if we slid far enough to run out of picture,
   // or if something inside a scroll box (not the window) moved.
   const moved = Math.abs(window.scrollY - snapshot.scrollY) + Math.abs(window.scrollX - snapshot.scrollX);
@@ -506,10 +556,43 @@ function onScroll() {
     const needTop = Math.max(0, window.scrollY - g.margin);
     const needBottom = Math.min(docH, window.scrollY + window.innerHeight + g.margin);
     const covered = snapshot.canvas && needTop >= top - 1 && needBottom <= bottom + 1;
-    if (!covered || moved === 0) scheduleSnapshot(250);
+    if (!covered || boxScrolled) scheduleSnapshot(250);
     return;
   }
-  if (moved > g.margin / 2 || moved === 0) scheduleSnapshot(250);
+  // Only when it's needed: glass that scrolls WITH the page (tab bars in a
+  // page, panels) keeps the same page area under it, which the picture
+  // already has. A retake (~300 ms of snapDOM work, in pieces) after every
+  // scroll stalled the glass whenever the next scroll began during it. Glass
+  // pinned to the window, or glass that scrolled in from outside the picture,
+  // still gets one.
+  if (boxScrolled || (moved > g.margin / 2 && !pictureCoversGlass())) scheduleSnapshot(250);
+}
+
+/** Does the current picture (slid by the scroll since it was taken) cover all floating WebGL glass now on screen? */
+function pictureCoversGlass() {
+  if (!snapshot.canvas) return false;
+  const dx = window.scrollX - snapshot.scrollX;
+  const dy = window.scrollY - snapshot.scrollY;
+  const left = snapshot.x - dx;
+  const top = snapshot.y - dy;
+  const right = left + snapshot.w;
+  const bottom = top + snapshot.h;
+  const vh = window.innerHeight;
+  const vw = window.innerWidth;
+  const pad = 24; // room for the rim to bend in a little page from round the glass
+  for (const e of allEntries()) {
+    if (placement(e.id).layer === 'base' || e.liveMode) continue;
+    const r = e.el.getBoundingClientRect();
+    if (!r.width || !r.height || r.bottom < 0 || r.top > vh || r.right < 0 || r.left > vw) continue; // off screen: not needed now
+    // (clamped to what a picture can hold: the window's width, the page's height)
+    const docBottom = Math.max(document.documentElement.scrollHeight, document.documentElement.clientHeight) - window.scrollY;
+    const nl = Math.max(0, r.left - pad);
+    const nr = Math.min(vw, r.right + pad);
+    const nt = Math.max(-window.scrollY, r.top - pad);
+    const nb = Math.min(docBottom, r.bottom + pad);
+    if (nl < left - 1 || nt < top - 1 || nr > right + 1 || nb > bottom + 1) return false;
+  }
+  return true;
 }
 function onResize() {
   scheduleSnapshot(250);

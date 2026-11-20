@@ -191,7 +191,8 @@ async function buildAll() {
         cssMinify: true, // (the glass.css string the provider injects: no comments)
         sourcemap: true,
         lib: {
-          entry: { index: join(GLASS_DIR, 'index.js') },
+          // (devtools: tuning + debugging — "glassparency/devtools")
+          entry: { index: join(GLASS_DIR, 'index.js'), devtools: join(GLASS_DIR, 'devtools.js') },
           formats: [format],
           fileName: (_f, name) => `${name}.${ext}`,
         },
@@ -255,14 +256,37 @@ async function buildAll() {
   if (missing.length) fail(`README.md links to images that aren't in npm/media: ${missing.join(', ')}`);
   const left = readme.match(/\{\{[A-Z_]+\}\}/); // (JSX like glass={{ … }} in examples is fine)
   if (left) fail(`README.md still has the placeholder ${left[0]}`);
-  cpSync(join(NPM_DIR, 'index.d.ts'), join(dist, 'index.d.ts'));
-  cpSync(join(NPM_DIR, 'index.d.ts'), join(dist, 'index.d.cts'));
+  // Types: the group names are generated from the built-in config (GlassGroups
+  // — autocomplete for group="…"; apps extend the interface with their own).
+  const groupNames = Object.keys(presets.groups || {}).sort();
+  const types = readFileSync(join(NPM_DIR, 'index.d.ts'), 'utf8');
+  if (!types.includes('/*@@GLASS_GROUPS@@*/')) fail('index.d.ts lost its /*@@GLASS_GROUPS@@*/ placeholder');
+  const typesOut = types.replace('/*@@GLASS_GROUPS@@*/', groupNames.map((g) => `  ${JSON.stringify(g)}: true;`).join('\n'));
+  writeFileSync(join(dist, 'index.d.ts'), typesOut);
+  writeFileSync(join(dist, 'index.d.cts'), typesOut);
+  cpSync(join(NPM_DIR, 'devtools.d.ts'), join(dist, 'devtools.d.ts'));
+  cpSync(join(NPM_DIR, 'devtools.d.ts'), join(dist, 'devtools.d.cts'));
+  // Every setting in the schema must be typed (GlassProps) — else it was added to config.js and forgotten here.
+  const untyped = Object.keys(readSchemaKeys()).filter((k) => !new RegExp(`\\n\\s+${k}\\??:`).test(types));
+  if (untyped.length) fail(`index.d.ts GlassProps is missing: ${untyped.join(', ')}`);
+  console.log(`✔ types written (${groupNames.length} group names)`);
   cpSync(join(GLASS_DIR, 'glass.css'), join(dist, 'glass.css'));
   writeJson(join(dist, 'glass.config.json'), presets);
 
   checkOutput(dist);
   smokeTest(out, pkg);
   console.log(`\n✔ ${pkg.name}@${version} built in ${out}`);
+}
+
+/** The settings in config.js's SCHEMA (name → its line), for the types check. */
+function readSchemaKeys() {
+  const src = readFileSync(join(GLASS_DIR, 'config.js'), 'utf8');
+  const start = src.indexOf('export const SCHEMA = {');
+  const end = src.indexOf('\n};', start);
+  if (start < 0 || end < 0) fail('config.js: SCHEMA not found');
+  const keys = {};
+  for (const m of src.slice(start, end).matchAll(/^ {2}(\w+): \{/gm)) keys[m[1]] = true;
+  return keys;
 }
 
 /** Make the output folder ready: create it, or clear a previous build. */
@@ -300,7 +324,7 @@ function checkOutput(dist) {
     if (/import\.meta\.hot\.accept/.test(code)) bad.push(`${f}: contains dev-only hot-reload code`);
     if (/DashboardPro|DenPro/i.test(code)) bad.push(`${f}: mentions DashboardPro / DenPro`);
   }
-  for (const need of ['index.js', 'index.cjs', 'glassparency.standalone.js']) if (!files.includes(need)) bad.push(`missing dist/${need}`);
+  for (const need of ['index.js', 'index.cjs', 'devtools.js', 'devtools.cjs', 'devtools.d.ts', 'glassparency.standalone.js']) if (!files.includes(need)) bad.push(`missing dist/${need}`);
   if (bad.length) fail(`the build is not clean:\n  ${bad.join('\n  ')}`);
   console.log('✔ build output checked (no app-only code, all entry files present)');
 }
@@ -350,9 +374,13 @@ function smokeTest(out, pkg) {
     `;
     writeFileSync(join(tmp, 'esm.mjs'), `import * as m from ${JSON.stringify(pkg.name)};\n${check}\n${ssr}\nconsole.log('ESM + server render ok');`);
     writeFileSync(join(tmp, 'cjs.cjs'), `const m = require(${JSON.stringify(pkg.name)});\n${check}\nconsole.log('CJS ok');`);
+    // The devtools entry, both formats.
+    const devCheck = `if (typeof d.setGlassOverride !== 'function' || !d.GLASS_SCHEMA) { console.error('devtools entry incomplete'); process.exit(1); }`;
+    writeFileSync(join(tmp, 'dev.mjs'), `import * as d from ${JSON.stringify(`${pkg.name}/devtools`)};\n${devCheck}\nconsole.log('devtools ESM ok');`);
+    writeFileSync(join(tmp, 'dev.cjs'), `const d = require(${JSON.stringify(`${pkg.name}/devtools`)});\n${devCheck}\nconsole.log('devtools CJS ok');`);
     const run = (file) =>
       execFileSync(process.execPath, ['--preserve-symlinks', '--no-warnings', join(tmp, file)], { cwd: tmp, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-    for (const f of ['esm.mjs', 'cjs.cjs']) {
+    for (const f of ['esm.mjs', 'cjs.cjs', 'dev.mjs', 'dev.cjs']) {
       try {
         console.log(`✔ smoke test: ${run(f)} (loads in Node without a browser)`);
       } catch (err) {

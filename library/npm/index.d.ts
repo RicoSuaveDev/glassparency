@@ -2,7 +2,7 @@
  * Glassparency — TypeScript types (hand-written; the library is plain JS).
  */
 // JSX comes from 'react' (React 19's types have no global JSX namespace).
-import type { ComponentPropsWithoutRef, DetailedHTMLProps, ElementType, ForwardRefExoticComponent, HTMLAttributes, JSX, ReactNode, RefAttributes, RefObject } from 'react';
+import type { ComponentPropsWithRef, ComponentPropsWithoutRef, DetailedHTMLProps, ElementType, ForwardRefExoticComponent, HTMLAttributes, JSX, ReactNode, RefAttributes, RefObject } from 'react';
 
 // --- Config ---------------------------------------------------------------------------------
 
@@ -17,6 +17,18 @@ export interface GlassSides {
   left?: number;
 }
 export type GlassLayer = 'base' | 'float' | 'modal' | 'top';
+
+/**
+ * The config's group names — generated from the built-in glass.config.json
+ * when the package is built, for autocomplete. Add your own:
+ *   declare module 'glassparency' { interface GlassGroups { promoCard: true } }
+ * (Any other string is still accepted.)
+ */
+export interface GlassGroups {
+/*@@GLASS_GROUPS@@*/
+}
+/** A group name: one of GlassGroups (autocompleted), or any string. */
+export type GlassGroupName = keyof GlassGroups | (string & {});
 
 /** Every glass property (all optional: anything left out comes from the group / defaults). */
 /** The look family: "default" = the group's own values (Apple), "crystal" = clearer, thicker glass, "frosted" = milky, heavily frosted glass in the group's own tint. */
@@ -195,13 +207,15 @@ export declare function GlassProvider(props: GlassProviderProps): JSX.Element;
 export declare function GlassLayerHost(props: { layer?: GlassLayer }): JSX.Element;
 
 export type GlassComponentProps<T extends ElementType = 'div'> = {
+  /** The element (or component) to render: <Glass as="button"> gets <button>'s props and ref. */
   as?: T;
-  group?: string;
+  group?: GlassGroupName;
   glass?: GlassProps;
   icon?: ReactNode | string;
   iconSize?: number;
-} & Omit<ComponentPropsWithoutRef<T>, 'as'>;
-export declare const Glass: ForwardRefExoticComponent<GlassComponentProps<ElementType> & RefAttributes<HTMLElement>>;
+} & Omit<ComponentPropsWithRef<T>, 'as' | 'group' | 'glass' | 'icon' | 'iconSize'>;
+/** Glass on any element: <Glass as="button" group="button" onClick={…}>. Props and ref follow `as` (default "div"). */
+export declare const Glass: <T extends ElementType = 'div'>(props: GlassComponentProps<T>) => JSX.Element | null;
 
 // --- Switch + slider ------------------------------------------------------------------------
 
@@ -325,30 +339,35 @@ export type GlassProgressProps = {
 /** Liquid Glass progress bar. */
 export declare const GlassProgress: ForwardRefExoticComponent<GlassProgressProps & RefAttributes<HTMLDivElement>>;
 
-export interface GlassWidgetController {
-  update(next?: Record<string, unknown>): void;
+/** A plain-JS control: update() takes the same options as its create… call (only what changes). */
+export interface GlassWidgetController<U = Record<string, unknown>> {
+  update(next?: U): void;
   destroy(): void;
 }
+type CheckboxOpts = { checked?: boolean; disabled?: boolean; onChange?: (checked: boolean) => void; groups?: GlassCheckGroups; props?: { box?: GlassProps } };
+type RadioOpts = { checked?: boolean; name?: string; disabled?: boolean; onChange?: (checked: boolean) => void; groups?: GlassCheckGroups; props?: { box?: GlassProps; dot?: GlassProps } };
+type TextFieldOpts = { clearable?: boolean; onClear?: () => void; groups?: GlassTextFieldGroups; props?: { field?: GlassProps; clear?: GlassProps } };
+type ProgressOpts = { value?: number | null; bead?: boolean; groups?: GlassProgressGroups; props?: { track?: GlassProps; fill?: GlassProps; bead?: GlassProps } };
 export declare function createCheckbox(
   el: HTMLElement,
-  opts?: { checked?: boolean; disabled?: boolean; onChange?: (checked: boolean) => void; groups?: GlassCheckGroups; props?: { box?: GlassProps } }
-): GlassWidgetController & { readonly checked: boolean };
+  opts?: CheckboxOpts
+): GlassWidgetController<CheckboxOpts> & { readonly checked: boolean };
 export declare function createRadio(
   el: HTMLElement,
-  opts?: { checked?: boolean; name?: string; disabled?: boolean; onChange?: (checked: boolean) => void; groups?: GlassCheckGroups; props?: { box?: GlassProps; dot?: GlassProps } }
-): GlassWidgetController & { readonly checked: boolean };
+  opts?: RadioOpts
+): GlassWidgetController<RadioOpts> & { readonly checked: boolean };
 export declare function createTextField(
   el: HTMLElement,
-  opts?: { clearable?: boolean; onClear?: () => void; groups?: GlassTextFieldGroups; props?: { field?: GlassProps; clear?: GlassProps } }
-): GlassWidgetController;
+  opts?: TextFieldOpts
+): GlassWidgetController<TextFieldOpts>;
 type LensBarOpts = { value?: number; onChange?: (index: number) => void; lensScale?: number; inset?: number; groups?: GlassLensBarGroups; props?: { bar?: GlassProps; lens?: GlassProps; lensActive?: GlassProps } };
-export declare function createLensBar(el: HTMLElement, opts?: LensBarOpts & { orientation?: 'horizontal' | 'vertical' }): GlassWidgetController & { readonly value: number };
-export declare function createTabBar(el: HTMLElement, opts?: LensBarOpts): GlassWidgetController & { readonly value: number };
-export declare function createSidebar(el: HTMLElement, opts?: LensBarOpts): GlassWidgetController & { readonly value: number };
+export declare function createLensBar(el: HTMLElement, opts?: LensBarOpts & { orientation?: 'horizontal' | 'vertical' }): GlassWidgetController<LensBarOpts> & { readonly value: number };
+export declare function createTabBar(el: HTMLElement, opts?: LensBarOpts): GlassWidgetController<LensBarOpts> & { readonly value: number };
+export declare function createSidebar(el: HTMLElement, opts?: LensBarOpts): GlassWidgetController<LensBarOpts> & { readonly value: number };
 export declare function createProgress(
   el: HTMLElement,
-  opts?: { value?: number | null; bead?: boolean; groups?: GlassProgressGroups; props?: { track?: GlassProps; fill?: GlassProps; bead?: GlassProps } }
-): GlassWidgetController & { readonly value: number | null };
+  opts?: ProgressOpts
+): GlassWidgetController<ProgressOpts> & { readonly value: number | null };
 
 // --- Squish & stretch (squish.js) -------------------------------------------------------------
 
@@ -372,7 +391,8 @@ export declare function createSquish(
 /** Stretch factors for something moving along (ux, uy) by `amount` (0.3 = 30% longer, thinner across). */
 export declare function stretchFor(ux: number, uy: number, amount: number): { sx: number; sy: number };
 
-export declare function useGlass(ref: RefObject<HTMLElement | null>, group: string | null | false | undefined, props?: GlassProps): void;
+/** Glass on a ref'd element. Returns its handle (stable across renders; no-ops until the glass is on). */
+export declare function useGlass(ref: RefObject<HTMLElement | null>, group: GlassGroupName | null | false | undefined, props?: GlassProps): GlassHandle;
 
 // --- Shape springs + liquid morph (motion.js, useMotion.js) ---------------------------------
 
@@ -413,7 +433,7 @@ export interface GlassMorphOptions {
   /** ms backwards. Default 620. */
   reverseDuration?: number;
   /** Glass group of the film. Default: the target's group, else "panel". */
-  group?: string;
+  group?: GlassGroupName;
   /** The film's end tint / frost. Default: the target's resolved look (it starts in `from`'s look). */
   look?: { tintOpacity?: number; blur?: number };
   /** How far the liquid neck reaches before it snaps (px). Default 34. */
@@ -471,7 +491,7 @@ declare module 'react' {
   namespace JSX {
     interface IntrinsicElements {
       /** Glass as an element: <glass-ui group="card" props='{"tint":"#e0e7ff"}'>…</glass-ui> */
-      'glass-ui': DetailedHTMLProps<HTMLAttributes<HTMLElement>, HTMLElement> & { group?: string; props?: string };
+      'glass-ui': DetailedHTMLProps<HTMLAttributes<HTMLElement>, HTMLElement> & { group?: GlassGroupName; props?: string };
     }
   }
 }
@@ -486,12 +506,25 @@ export declare function useGlassMorph(
 
 // --- Plain JavaScript -------------------------------------------------------------------------
 
+/** An element's glass: what attachGlass() and useGlass() return. */
 export interface GlassHandle {
-  id: number | null;
+  readonly id: number | null;
+  /** The element the glass is on. */
+  readonly el: HTMLElement | null;
+  /** Replace the per-element props. */
   setProps(props: GlassProps): void;
-  destroy(): void;
+  /** Change SOME per-element props, keeping the rest. */
+  merge(partial: GlassProps): void;
+  /** The per-element props (a copy). */
+  getProps(): GlassProps | null;
+  /** Hover / pressed from code — the same look, press grow and glow the pointer gives. */
+  setState(state: { hover?: boolean; pressed?: boolean }): void;
+  /** Water rings from (x, y) in the element's own px (default: its centre). Groups with "ripple" > 0. */
+  ripple(x?: number, y?: number): void;
+  /** Remove the glass (attachGlass only — useGlass removes it on unmount). */
+  destroy?(): void;
 }
-export declare function attachGlass(el: HTMLElement, group: string, props?: GlassProps): GlassHandle;
+export declare function attachGlass(el: HTMLElement, group: GlassGroupName, props?: GlassProps): GlassHandle & { destroy(): void };
 export declare function setGlassProps(el: HTMLElement, props: GlassProps): void;
 /** The element's current per-element props (a copy), or null when it has no glass. */
 export declare function getGlassProps(el: HTMLElement): GlassProps | null;
@@ -503,14 +536,17 @@ export declare function addGlassPresets(config: GlassConfig): () => void;
 export declare function getGlassConfig(): GlassConfig;
 export declare function requestGlassRender(): void;
 export declare function reserveSnapshotArea(key: string, rect: { left: number; top: number; right: number; bottom: number } | null): void;
-export declare function isGlassColor(value: unknown): boolean;
+/** @deprecated moved to "glassparency/devtools" (still here until the next major version) */
+export declare const isGlassColor: typeof import('./devtools').isGlassColor;
 export declare const GLASS_VERSION: string;
 
 // --- Tools (for building a live tuning panel) -------------------------------------------------
 
-export declare const GLASS_SCHEMA: Record<string, { type: string; label: string; section: string; min?: number; max?: number; step?: number; values?: string[] }>;
+/** @deprecated moved to "glassparency/devtools" (still here until the next major version) */
+export declare const GLASS_SCHEMA: typeof import('./devtools').GLASS_SCHEMA;
 export declare const GLASS_LAYERS: GlassLayer[];
-export declare const GLASS_STATE_KEYS: Array<'hover' | 'pressed' | 'disabled'>;
+/** @deprecated moved to "glassparency/devtools" (still here until the next major version) */
+export declare const GLASS_STATE_KEYS: typeof import('./devtools').GLASS_STATE_KEYS;
 export declare const GLASS_LIVE_SUPPORTED: boolean;
 /** Can this browser run global.backdrop "canvas" (HTML-in-Canvas, Chromium 157+)? */
 export declare const GLASS_CANVAS_BACKDROP_SUPPORTED: boolean;
@@ -518,35 +554,35 @@ export declare function getGlassGlobal(): Required<Omit<GlassGlobal, 'zIndex' | 
   zIndex: { base: number; float: number; top: number };
   snapshot: Required<NonNullable<GlassGlobal['snapshot']>>;
 };
-export declare function glassGroupNames(): string[];
-export declare function rawGlassGroup(group: string): GlassGroup;
-export declare function rawGlassThemeGroup(group: string): GlassGroup;
-export declare function rawGlassDefaults(): GlassGroup;
+/** @deprecated moved to "glassparency/devtools" (still here until the next major version) */
+export declare const glassGroupNames: typeof import('./devtools').glassGroupNames;
+/** @deprecated moved to "glassparency/devtools" (still here until the next major version) */
+export declare const rawGlassGroup: typeof import('./devtools').rawGlassGroup;
+/** @deprecated moved to "glassparency/devtools" (still here until the next major version) */
+export declare const rawGlassThemeGroup: typeof import('./devtools').rawGlassThemeGroup;
+/** @deprecated moved to "glassparency/devtools" (still here until the next major version) */
+export declare const rawGlassDefaults: typeof import('./devtools').rawGlassDefaults;
 export declare function getGlassTheme(): 'light' | 'dark';
-export declare function resolveGlass(group: string, props?: GlassProps, state?: { hover?: boolean; pressed?: boolean; disabled?: boolean }): ResolvedGlass;
-export declare function setGlassOverride(group: string, props: GlassGroup): void;
-export declare function clearGlassOverride(group: string): void;
-export declare function getGlassOverride(group: string): GlassGroup;
-export declare function setGlassStateOverride(group: string, state: 'hover' | 'pressed' | 'disabled', props: GlassProps): void;
-export declare function setGlassForcedState(group: string, state: 'hover' | 'pressed' | 'disabled' | null): void;
-export declare function subscribeGlassConfig(fn: (version: number) => void): () => void;
+export declare function resolveGlass(group: GlassGroupName, props?: GlassProps, state?: { hover?: boolean; pressed?: boolean; disabled?: boolean }): ResolvedGlass;
+/** @deprecated moved to "glassparency/devtools" (still here until the next major version) */
+export declare const setGlassOverride: typeof import('./devtools').setGlassOverride;
+/** @deprecated moved to "glassparency/devtools" (still here until the next major version) */
+export declare const clearGlassOverride: typeof import('./devtools').clearGlassOverride;
+/** @deprecated moved to "glassparency/devtools" (still here until the next major version) */
+export declare const getGlassOverride: typeof import('./devtools').getGlassOverride;
+/** @deprecated moved to "glassparency/devtools" (still here until the next major version) */
+export declare const setGlassStateOverride: typeof import('./devtools').setGlassStateOverride;
+/** @deprecated moved to "glassparency/devtools" (still here until the next major version) */
+export declare const setGlassForcedState: typeof import('./devtools').setGlassForcedState;
+/** @deprecated moved to "glassparency/devtools" (still here until the next major version) */
+export declare const subscribeGlassConfig: typeof import('./devtools').subscribeGlassConfig;
 export type GlassStatus = { state: 'off' | 'loading' | 'on' | 'fallback'; reason: string };
 export declare function getGlassStatus(): GlassStatus;
 export declare function subscribeGlassStatus(fn: (status: GlassStatus) => void): () => void;
-export declare const glassStats: {
-  frames: number;
-  lastFrameMs: number;
-  snapshots: number;
-  lastSnapshotMs: number;
-  lastSnapshotAt: number;
-  /** Floating canvases: frames that re-used the "everything below" cache / that redrew it. */
-  belowHits: number;
-  belowMisses: number;
-  /** Canvas mode: last frame's element-position sync and drawing (ms). */
-  canvasSyncMs: number;
-  canvasPaintMs: number;
-};
-export declare function glassLiveCount(): number;
+/** @deprecated moved to "glassparency/devtools" (still here until the next major version) */
+export declare const glassStats: typeof import('./devtools').glassStats;
+/** @deprecated moved to "glassparency/devtools" (still here until the next major version) */
+export declare const glassLiveCount: typeof import('./devtools').glassLiveCount;
 /** Automatic quality: the level in use, whether it's automatic, and the fps it last measured while animating. */
 export type GlassQuality = { level: 'high' | 'medium' | 'low'; auto: boolean; fps: number };
 export declare function getGlassQuality(): GlassQuality;

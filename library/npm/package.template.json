@@ -1,7 +1,7 @@
 {
   "$comment": "Template for the published package.json. build.mjs copies it into the build folder (minus this comment). The release script (scripts/glass-release.sh) bumps \"version\" here. To rename the package, change \"name\" (check it is free first: npm view <name>).",
   "name": "glassparency",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Apple-style Liquid Glass for the web: real refraction of the page (WebGL + live SVG filters), squircle rims, specular light, liquid morphing, light/dark themes and an automatic CSS fallback. React hooks plus a no-React script for any site.",
   "keywords": [
     "liquid-glass",
@@ -42,6 +42,16 @@
         "default": "./dist/index.cjs"
       }
     },
+    "./devtools": {
+      "import": {
+        "types": "./dist/devtools.d.ts",
+        "default": "./dist/devtools.js"
+      },
+      "require": {
+        "types": "./dist/devtools.d.cts",
+        "default": "./dist/devtools.cjs"
+      }
+    },
     "./glass.css": "./dist/glass.css",
     "./glass.config.json": "./dist/glass.config.json",
     "./package.json": "./package.json"
@@ -60,7 +70,7 @@
     "./dist/glassparency.standalone.js"
   ],
   "peerDependencies": {
-    "@react-three/drei": "^10.7.0",
+    "@react-three/drei": ">=10.7.0 <10.8.0",
     "@react-three/fiber": "^9.0.0",
     "react": ">=19 <19.4",
     "react-dom": ">=19 <19.4",

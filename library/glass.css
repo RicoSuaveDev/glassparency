@@ -194,10 +194,6 @@ html[data-glass='on'] [data-glass-active][data-glass-icon-size] svg {
   -webkit-tap-highlight-color: transparent;
   user-select: none;
 }
-:where([data-gp-switch], [data-gp-slider]):focus-visible {
-  outline: 2px solid var(--gp-focus, #0a84ff);
-  outline-offset: 3px;
-}
 :where([data-gp-switch]:disabled, [data-gp-switch][aria-disabled='true'], [data-gp-slider][aria-disabled='true']) {
   opacity: 0.45;
   cursor: default;
@@ -257,10 +253,6 @@ html[data-glass='on'] [data-glass-active][data-glass-icon-size] svg {
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
   user-select: none;
-}
-:where([data-gp-check], [data-gp-radio]):focus-visible > [data-gp-box] {
-  outline: 2px solid var(--gp-focus, #0a84ff);
-  outline-offset: 2px;
 }
 :where([data-gp-check], [data-gp-radio]):is(:disabled, [aria-disabled='true']) {
   opacity: 0.45;
@@ -436,8 +428,10 @@ html[data-glass='on'] [data-glass-active][data-glass-icon-size] svg {
    the layer owns. Sides cover only the straight runs and corners only their
    quarter, so they meet at the tangent instead of overlapping into a kink. */
 :is([data-gp-css-layer='fold'], [data-gp-css-layer='glint'], [data-gp-css-layer='rim'], [data-gp-css-layer='spec']) {
-  --w: calc(var(--gp-css-edge-w, 1px) * var(--gp-css-s, 1));
-  --d: calc(var(--gp-css-edge-d, 2.5px) * var(--gp-css-s, 1));
+  /* Ring: solid --w, fading out by --d (px from cssGlass.js bandVars:
+     from the bevel, capped — never the corner radius). */
+  --w: var(--gp-css-w, calc(var(--gp-css-edge-w, 1px) * var(--gp-css-s, 1)));
+  --d: var(--gp-css-d, calc(var(--gp-css-edge-d, 2.5px) * var(--gp-css-s, 1)));
   --r: var(--gp-css-r, 12px);
   mask-image:
     var(--gp-arc),
@@ -471,7 +465,7 @@ html[data-glass='on'] [data-glass-active][data-glass-icon-size] svg {
 [data-gp-css-layer='fold'] {
   --gp-arc: linear-gradient(#000 0 0);
   --w: 0px;
-  --d: calc(var(--gp-css-r, 12px) * var(--gp-css-fold-k, 0.43));
+  --d: var(--gp-css-fold-d, calc(var(--gp-css-r, 12px) * var(--gp-css-fold-k, 0.43)));
 }
 /* Veil: a milky white wash over the pane (frosted style). */
 [data-gp-css-layer='veil'] {
@@ -655,4 +649,27 @@ html[data-glass-canvas],
 html[data-glass-canvas] body {
   overflow: hidden !important;
   height: 100%;
+}
+
+/* --- Native control feel: no focus rings / highlights, no dragging ------------------------
+   Glass controls show NO focus ring or highlight — not the browser's default
+   outline, not one of ours — whether focused by mouse, touch or keyboard.
+   :where() = no specificity: a site that wants a ring adds its own. */
+:where([data-glass-active], [data-gp-switch], [data-gp-slider], [data-gp-check], [data-gp-radio], [data-gp-field], [data-gp-lensbar] [data-gp-item]):is(:focus, :focus-visible),
+:where([data-gp-check], [data-gp-radio]):is(:focus, :focus-visible) > [data-gp-box] {
+  outline: none;
+}
+:where([data-gp-field]) :where(input, textarea):is(:focus, :focus-visible) {
+  outline: none;
+}
+:where([data-glass-active], [data-gp-lensbar] [data-gp-item]) {
+  -webkit-tap-highlight-color: transparent; /* (no grey tap flash on phones) */
+}
+/* Pressing a glass button / link and moving must never pick up a ghost image
+   of the link or an image in it (useGlass.js also cancels dragstart — Firefox). */
+:where(a[href][data-glass-active], button[data-glass-active], [role='button'][data-glass-active], [role='tab'][data-glass-active], [role='menuitem'][data-glass-active]),
+:where(a[href][data-glass-active], button[data-glass-active], [role='button'][data-glass-active], [role='tab'][data-glass-active], [role='menuitem'][data-glass-active]) :where(a, img, svg),
+:where(a[href]):has(> [data-glass-active]) {
+  -webkit-user-drag: none;
+  user-drag: none;
 }

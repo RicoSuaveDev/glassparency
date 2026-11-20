@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.5.0 — 2026-11-20
+
+- Fixed: WebGL buttons and tab bars froze their refraction until scrolling stopped (worst in Chrome on pages with many live controls). Text-colour readbacks no longer run mid-scroll, auto quality no longer drops (and recompiles shaders) during a scroll, and a busy progress bar no longer makes every canvas redraw every frame.
+- Fixed: floating / tab-bar glass refracted a stale copy of a window-fixed background photo that slid along with the page. snapDOM 3.7 re-inlined the background after it had been removed from page pictures.
+- Fixed: page pictures are no longer retaken after every scroll (only when glass scrolls in from outside the picture or a scroll box moves), and the glass's own CSS variables changing no longer trigger a new picture.
+- Fixed: morph toolbars stopped animating because the auto-text colour fade replaced the element's own CSS transitions; the fade now runs in JS.
+- Fixed: a pressed switch knob showed 1–3 frames of flat colour before its lens appeared (live glass now syncs in the same frame).
+- Changed: textColor "auto" is now the default. Text on glass is light or dark (textLight / textDark), whichever reads better over what's behind it, and fades between them. Set a fixed textColor to opt out, or null to use your own CSS.
+- Changed: glassMorph(from, to) keeps the real button (keepFrom, default true): the target buds out of it and melts back in. keepFrom: false gives the old film.
+- Changed: glass controls show no focus ring, highlight or tap flash (add your own if you want one), and pressable glass never starts a link / image drag.
+- Changed: the CSS fallback glass (Safari / Firefox / phones) draws the same thin rim on every control instead of a wide glowing edge on large or crystal ones.
+- Changed: drop shadows on WebGL glass now match CSS box-shadow exactly (Gaussian blur).
+- New: "glassparency/devtools" entry for live overrides, forced states, raw config blocks, the settings schema and render counters. The main entry still exports them until the next major version, warning once.
+- New: one glass handle from attachGlass() and useGlass(): el, setProps, merge, getProps, setState({ hover, pressed }), ripple(x, y). The script build (window.Glassparency) now uses the module's names too.
+- New: TypeScript group-name autocomplete generated from glass.config.json, a polymorphic <Glass as>, GlassHandle and devtools types.
+- New: global.blur "smooth" (default, a dual-Kawase frost that stays steady while the page moves) or "mip" (the pre-1.5 look); global.blend "linear" (opt-in light mixing).
+- New: morph glass now has the full look of regular glass (border, shadow, reflection, press glow) and blends each shape's own settings.
+- New: per-group "canvas": { … } blocks applied only in canvas (HTML-in-Canvas) mode; canvas mode repaints more reliably in Chromium 157.
+- New: a warning when two copies of the library are loaded on one page.
+- Performance: live (SVG) glass displacement maps are cached, and large ones are built in a Web Worker.
+
 ## 1.4.0 — 2026-11-18
 
 - Fixed: Safari froze for 5–16 s on glass-heavy pages; page pictures now skip backdrop-filter frost (snapDOM copied the whole page once per CSS-glass pane), and WebGL glass takes over again.

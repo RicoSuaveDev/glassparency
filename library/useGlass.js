@@ -27,7 +27,7 @@
  */
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import { explicitKeys, resolveGlass, subscribeConfig } from './config';
-import { getEntry, register, requestRender, subscribeStatus, unregister, update } from './registry';
+import { cannotMoveWebglGlass, getEntry, register, requestRender, subscribeStatus, unregister, update } from './registry';
 import { scheduleLiveSync } from './live';
 import { createSquish } from './squish';
 import { createRipples } from './ripple';
@@ -55,7 +55,32 @@ export function useGlass(ref, group, props) {
   useEffect(() => {
     handleRef.current?.setProps(propsRef.current || {});
   }, [propsKey, ref]);
+
+  // The glass handle (attachGlass's), stable across renders: merge(),
+  // setState({ hover, pressed }), ripple(x, y)… — no-ops until the glass is
+  // on the element (after the first layout effect).
+  const api = useRef(null);
+  if (!api.current) {
+    const h = () => handleRef.current;
+    api.current = {
+      get id() {
+        return h()?.id ?? null;
+      },
+      get el() {
+        return h()?.el ?? null;
+      },
+      setProps: (next) => h()?.setProps(next),
+      merge: (partial) => h()?.merge(partial),
+      getProps: () => h()?.getProps() ?? null,
+      setState: (next) => h()?.setState(next),
+      ripple: (x, y) => h()?.ripple(x, y),
+    };
+  }
+  return api.current;
 }
+
+/** Glass elements that are pressed like a button (no link / image drag on them). */
+const PRESSABLE = "a[href], button, [role='button'], [role='tab'], [role='menuitem'], [role='option'], [role='switch']";
 
 /** A stable key for the props object (it's usually a new object each render). */
 function propsKeyOf(props) {
@@ -84,7 +109,7 @@ const attached = new WeakMap();
  * @returns {{ id: number|null, setProps(props: object): void, destroy(): void }}
  */
 export function attachGlass(el, group, props = {}) {
-  if (!el || el.nodeType !== 1 || !group) return { id: null, setProps() {}, destroy() {} };
+  if (!el || el.nodeType !== 1 || !group) return { id: null, el: el || null, setProps() {}, merge() {}, getProps: () => ({}), setState() {}, ripple() {}, destroy() {} };
   const previous = attached.get(el);
   if (previous) {
     console.warn('glass: this element already had glass — replacing it (one glass per element)', el);
@@ -272,6 +297,14 @@ export function attachGlass(el, group, props = {}) {
   el.addEventListener('pointercancel', up);
   el.addEventListener('lostpointercapture', up);
   el.addEventListener('click', swallowClick, true);
+  // Pressable glass (a button, a link, a tab — or glass inside a link): no
+  // link / image drag when pressed and moved — it would leave a ghost image
+  // of the link under the pointer instead of feeling like a button.
+  // (glass.css sets -webkit-user-drag: none too; this covers Firefox.)
+  const noDrag = (ev) => {
+    if (el.matches(PRESSABLE) || el.closest('a[href]')) ev.preventDefault();
+  };
+  el.addEventListener('dragstart', noDrag);
   // :disabled / aria-disabled changes
   const mo = new MutationObserver(() => {
     const d = isDisabled(el);
@@ -283,7 +316,9 @@ export function attachGlass(el, group, props = {}) {
   const ro =
     typeof ResizeObserver === 'function'
       ? new ResizeObserver(() => {
-          requestRender();
+          // (Not for live glass that can't move any WebGL glass — e.g. the
+          // busy progress fill resizing every frame; see cannotMoveWebglGlass.)
+          if (!cannotMoveWebglGlass(el)) requestRender();
           scheduleLiveSync(el); // live glass rebuilds ITS filter for the new size (just this element)
         })
       : null;
@@ -292,12 +327,44 @@ export function attachGlass(el, group, props = {}) {
   let destroyed = false;
   const handle = {
     id,
+    /** The element the glass is on. */
+    el,
     /** Replace the per-element props (same as useGlass's third argument). */
     setProps(next) {
       if (destroyed) return;
       current = next || {};
       update(id, { props: current });
       applyDom();
+    },
+    /** Change SOME per-element props, keeping the rest. */
+    merge(partial) {
+      handle.setProps({ ...current, ...(partial || {}) });
+    },
+    /** The per-element props (a copy). */
+    getProps() {
+      return { ...current };
+    },
+    /**
+     * Hover / pressed from code (keyboard focus, a remote control, a demo):
+     * the same look, press grow and press glow as the pointer gives. The
+     * pointer still changes them as usual.
+     */
+    setState(next = {}) {
+      if (destroyed) return;
+      const patch = {};
+      if (typeof next.hover === 'boolean') patch.hover = next.hover;
+      if (typeof next.pressed === 'boolean' && next.pressed !== entryState.pressed) {
+        patch.pressed = next.pressed;
+        press(next.pressed);
+      }
+      if (Object.keys(patch).length) set(patch);
+    },
+    /** Water rings from (x, y) in the element's own px (groups with "ripple" > 0). */
+    ripple(x, y) {
+      if (destroyed) return;
+      ripples ||= createRipples(id, () => resolveGlass(group, current));
+      const r = el.getBoundingClientRect();
+      ripples.enter(x ?? r.width / 2, y ?? r.height / 2);
     },
     /** Remove the glass: the element gets its own CSS back. */
     destroy() {
@@ -319,6 +386,7 @@ export function attachGlass(el, group, props = {}) {
       window.removeEventListener('pointerup', up, true);
       window.removeEventListener('pointercancel', up, true);
       el.removeEventListener('click', swallowClick, true);
+      el.removeEventListener('dragstart', noDrag);
       pressAnim?.cancel();
       squish?.destroy();
       ripples?.destroy();
@@ -384,6 +452,20 @@ export function mergeGlassProps(el, partial) {
   const handle = attached.get(el);
   if (handle) handle.setProps(next);
   else setGlassProps(el, next);
+}
+
+/**
+ * Put back an element's per-element glass props exactly as they were (a copy
+ * from getGlassProps) — through its glass handle, like mergeGlassProps.
+ * (motion.js: a morph's `from` joins the film's liquid for its duration.)
+ * @param {HTMLElement} el
+ * @param {object} props
+ */
+export function restoreGlassProps(el, props) {
+  if (!getGlassProps(el)) return;
+  const handle = attached.get(el);
+  if (handle) handle.setProps({ ...(props || {}) });
+  else setGlassProps(el, props || {});
 }
 
 /**

@@ -99,6 +99,27 @@ subscribeConfig(() => {
   }
 });
 
+// --- Scrolling doesn't count ------------------------------------------------------------
+// While the page scrolls, frames are slow because the BROWSER is busy
+// (compositing the scroll, re-running every live SVG glass filter), not
+// because the WebGL glass is too expensive — a lower level wouldn't help.
+// And a level change itself stalls the page for ~250 ms (shaders recompile,
+// buffers are re-made): measured in the UI lab in Chrome, a fast scroll
+// stepped high → medium → low, each step freezing the glass mid-scroll.
+// So frames drawn while scrolling (+ SCROLL_QUIET_MS after) are not judged.
+const SCROLL_QUIET_MS = 300;
+let lastScrollAt = -Infinity;
+if (typeof window !== 'undefined') {
+  window.addEventListener(
+    'scroll',
+    () => {
+      lastScrollAt = performance.now();
+    },
+    { capture: true, passive: true }
+  );
+}
+const scrolling = () => performance.now() - lastScrollAt < SCROLL_QUIET_MS;
+
 function resetWindow() {
   windowStart = 0;
   deltas = [];
@@ -129,6 +150,7 @@ export function noteFrame(now) {
   lastFrameAt = now;
   if (getGlobal().quality !== 'auto') return;
   if (typeof document !== 'undefined' && document.hidden) return resetWindow();
+  if (scrolling()) return resetWindow(); // (see "Scrolling doesn't count")
   if (dt > GAP_MS) return resetWindow(); // the animation had stopped: not a slow frame
   if (now < settleUntil) return;
   refreshMs = Math.min(refreshMs, Math.max(4, dt)); // fastest frames seen ≈ the screen's refresh

@@ -351,11 +351,11 @@ glassMorph(button, panel, { direction: 'out' });   // close one that is already 
 button.addEventListener('pointerenter', () => glassMorph.warm(button, panel));  // optional: picture ready early
 ```
 
-The film: `from` itself becomes the glass. It starts as exactly `from` (same box, corner radius and glass look) and
-stretches and swells into the target's exact box and corner radius, with a liquid neck back to `from` when the
-target is further away. The glass blends from `from`'s look to the target's. Then the target takes over with its own
-glass and its content fades in. `from` is hidden only while the film plays, and closing lands back on its exact
-shape before it is shown again.
+The film: the target buds out of `from`. `from` itself stays exactly as it is (its size, its look, its content) and
+joins the film's liquid while it plays; the new glass starts on `from`, swells into the target's exact box and corner
+radius with a liquid neck back to `from` while they're close, and blends from `from`'s look to the target's. Then the
+target takes over with its own glass and its content fades in. Closing melts it back into `from`. (Like a morph
+toolbar's items coming out of its + button.)
 
 | Option | Default | |
 |---|---|---|
@@ -366,6 +366,7 @@ shape before it is shown again.
 | `layer` | `float` | Glass layer of the film |
 | `fadeContent` | `true` | Fade the target's content in at the end (and out first when closing) |
 | `direction` | `in` | `out` = the shown target melts back into `from` and is hidden |
+| `keepFrom` | `true` | `false` = `from` is hidden while the film plays and a stand-in takes its place (the 1.4 behaviour) |
 
 - The target can be any element, with or without glass. It is measured where it is laid out, so give it its final
   position (e.g. `position: fixed` / `absolute`) before morphing.
@@ -374,15 +375,19 @@ shape before it is shown again.
 
 ## Readable text automatically: `textColor: "auto"`
 
+On by default (since 1.5): text on glass is light or dark, whichever is readable over what's behind it.
+
 ```js
-configureGlass({ groups: { chip: { textColor: 'auto' } } });
-// or pick the two colours it chooses between:
-configureGlass({ groups: { chip: { textColor: 'auto', textLight: '#ffffff', textDark: '#0b1b3a' } } });
+// pick the two colours it chooses between (for every group, or one):
+configureGlass({ defaults: { textLight: '#ffffff', textDark: '#0b1b3a' } });
+// a fixed colour turns it off for that group; null = your own CSS text colour:
+configureGlass({ groups: { chip: { textColor: '#ffffff' }, card: { textColor: null } } });
 ```
 
 The text (and `currentColor` icons) becomes `textLight` or `textDark`, whichever contrasts more (WCAG contrast
 ratio) with what is really behind the glass, including its own tint and brightness. It switches with a margin, so it
-doesn't flicker over a busy picture.
+doesn't flicker over a busy picture, and fades into the other colour (no CSS transition is set on your element, so
+its own transitions keep working).
 
 - **WebGL glass** samples the exact image it refracts, on the GPU: a tiny mip level of it is copied asynchronously
   (no GPU stall), at most about 4 times a second and only while frames are drawn. An idle page costs nothing.
@@ -507,7 +512,10 @@ element (also `var(--token, fallback)`). A colour's own alpha is ignored: use th
 | `mobileLayers` | `["top"]` | Layers that still get WebGL in the mobile layout (only their own glass: tab bars). `[]` = all CSS there |
 | `zIndex` | `{ base: -1, float: 49, top: 48 }` | Stacking of the page‑wide canvases (see "Layers") |
 | `theme` | `"auto"` | `"light"` / `"dark"` forces a theme |
-| `anchor` | `"viewport"` | `"page"` = the canvases scroll with the page (see "Phones and tablets") |
+| `anchor` | `"page"` | The canvases scroll with the page, so glass can't trail behind its element; glass on fixed / sticky elements gets its own window-fixed canvas. `"viewport"` = the pre-1.4 window-fixed canvases |
+| `backdrop` | `"snapshot"` | What floating WebGL glass refracts: `"snapshot"` = a picture of the page (every browser); `"canvas"` (experimental, Chromium 157+ HTML-in-Canvas) = the live page, every frame (the page scrolls in its own box; other-origin images without CORS draw blank) |
+| `blur` | `"smooth"` | WebGL frost: `"smooth"` = a dual-Kawase blur (soft, steady while the page moves); `"mip"` = the GPU's box-filtered mipmaps (the pre-1.5 look) |
+| `blend` | `"srgb"` | `"linear"` (opt-in) = the shaders mix rim light, border, saturation, morph glass and the frost in linear light: brighter rims over dark tints, frost that keeps bright spots. The tint over the refracted page stays sRGB |
 | `maxDpr`, `bufferScale` | 1.5, 1 | Render resolution caps |
 | `quality` | `"auto"` | Automatic quality: full quality, stepped down (`medium`: ≤ 4 samples, ¾ buffer, ≤ 1.25 dpr; `low`: ≤ 3, ½, 1) only while **animating** glass runs under ~40 fps, and back up once smooth. An idle page is never throttled. `"high"` / `"medium"` / `"low"` = fixed. `getGlassQuality()` says which level is in use |
 | `snapshot` | `{ enabled, debounceMs, minIntervalMs, margin, scale, fullPage: "mobile", mobileScale: 2 }` | Page pictures for WebGL floating glass. `fullPage` pictures the whole page (`true` / `"mobile"` / `false`), so pinned glass never runs out of picture while scrolling |
@@ -645,13 +653,13 @@ Your own CSS is used when:
 |---|---|
 | `<GlassProvider config renderIcon injectStyles nonce>` | Starts the glass (once per page) |
 | `<Glass as group glass icon iconSize …>` | An element with glass. `icon` = an element, or a name drawn by `renderIcon(name, size)` |
-| `useGlass(ref, group, props?)` | The hook |
+| `useGlass(ref, group, props?) → handle` | The hook. Returns the element's glass handle (stable across renders) |
 | `<GlassSwitch>`, `<GlassSlider>` | Liquid Glass switch and slider (see "Switches and sliders") |
 | `createSwitch(el, opts)`, `createSlider(el, opts)` | The same without React |
 | `<GlassCheckbox>`, `<GlassRadio>`, `<GlassTextField>`, `<GlassTabBar>`, `<GlassSidebar>`, `<GlassProgress>` | More controls (see "Checkboxes, radios…") |
 | `createCheckbox`, `createRadio`, `createTextField`, `createTabBar`, `createSidebar`, `createLensBar`, `createProgress` | The same without React |
 | `createSquish(el, readCfg)`, `stretchFor(ux, uy, amount)` | Squish & stretch for your own animations |
-| `attachGlass(el, group, props?) → { setProps, destroy }` | The same without React |
+| `attachGlass(el, group, props?) → handle` | The same without React. The handle: `setProps(props)`, `merge(partial)`, `getProps()`, `setState({ hover, pressed })` (the same look, press grow and glow the pointer gives), `ripple(x?, y?)`, `destroy()`, `el`, `id` |
 | `setGlassProps(el, props)` | Change an element's look without a render (animations) |
 | `getGlassProps(el)`, `mergeGlassProps(el, partial)` | Read / change some of an element's per-element props |
 | `createShapeSpring(el, opts)`, `useShapeSpring(ref, shape, opts)` | Shape springs |
@@ -662,9 +670,21 @@ Your own CSS is used when:
 | `requestGlassRender()` | Redraw now (after moving elements outside `global.root` yourself) |
 | `reserveSnapshotArea(key, rect)` | See "Liquid morph" |
 | `<GlassLayerHost layer>` | A canvas for the `modal` / `top` layer |
-| `getGlassStatus()`, `subscribeGlassStatus(fn)`, `glassStats` | State and frame / picture timings |
+| `getGlassStatus()`, `subscribeGlassStatus(fn)` | State: `loading` / `on` / `fallback` (+ reason) |
 | `getGlassQuality()`, `subscribeGlassQuality(fn)` | Automatic quality: the level in use (`high` / `medium` / `low`) and the fps measured while animating |
-| `GLASS_SCHEMA`, `resolveGlass`, `setGlassOverride`, `setGlassStateOverride`, `setGlassForcedState`, … | Build a live tuning panel |
+| `resolveGlass(group, props?, state?)`, `getGlassGlobal()`, `getGlassTheme()`, `GLASS_LAYERS` | The resolved settings |
+
+**`glassparency/devtools`** (tuning and debugging, not needed to use the glass): `setGlassOverride`,
+`clearGlassOverride`, `getGlassOverride`, `setGlassStateOverride`, `setGlassForcedState`, `rawGlassGroup`,
+`rawGlassThemeGroup`, `rawGlassDefaults`, `glassGroupNames`, `subscribeGlassConfig`, `GLASS_SCHEMA`,
+`GLASS_STATE_KEYS`, `glassStats`, `glassLiveCount`, `isGlassColor`. (Until the next major version the main entry
+still exports them too, each warning once that it moved.)
+
+**The script build** (`window.Glassparency`) has the same names (`attachGlass`, `setGlassProps`, `configureGlass`,
+…); its short names (`attach`, `setProps`, `configure`, …) are aliases.
+
+**TypeScript:** `group="…"` autocompletes the built-in group names. Add your own:
+`declare module 'glassparency' { interface GlassGroups { promoCard: true } }`.
 
 ## Requirements
 - **React apps:** React 19 (19.0–19.3, the range react‑three‑fiber 9 supports), three ≥ 0.159,
