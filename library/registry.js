@@ -55,7 +55,22 @@ export function update(id, patch) {
   const e = entries.get(id);
   if (!e) return;
   if (patch.state) e.state = { ...e.state, ...patch.state };
-  if (patch.props) e.props = patch.props;
+  // A per-element layer / tier change moves the element to another canvas:
+  // the cached placements are stale, and every canvas must pick its
+  // elements again. (Only config and group changes did this — an element
+  // moved by its props, e.g. a popover's button lifted into the overlay for
+  // its morph and put back, stayed drawn on the old canvas and missing from
+  // the new one.)
+  let moved = false;
+  if (patch.props) {
+    const was = e.props || {};
+    moved = was.layer !== patch.props.layer || was.tier !== patch.props.tier;
+    e.props = patch.props;
+  }
+  if (moved) {
+    placements = null;
+    structureChanged();
+  }
   if (patch.suspended !== undefined) e.suspended = Boolean(patch.suspended);
   if (patch.group && patch.group !== e.group) {
     e.group = patch.group;

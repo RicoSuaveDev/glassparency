@@ -20,6 +20,8 @@ export declare function setGlassStateOverride(group: GlassGroupName, state: 'hov
 export declare function setGlassForcedState(group: GlassGroupName, state: 'hover' | 'pressed' | 'disabled' | null): void;
 export declare function subscribeGlassConfig(fn: (version: number) => void): () => void;
 export declare function glassLiveCount(): number;
+/** An element's glass group, how it is drawn right now, and its per-element props (null: no glass). */
+export declare function getGlassInfo(el: Element | null | undefined): { group: GlassGroupName; renderer: 'live' | 'tint' | 'webgl' | 'css'; props: GlassProps } | null;
 export declare const glassStats: {
   frames: number;
   lastFrameMs: number;

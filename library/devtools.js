@@ -29,3 +29,28 @@ export {
 } from './config';
 export { stats as glassStats } from './registry';
 export { liveCount as glassLiveCount } from './live';
+
+import { getEntry } from './registry';
+
+/**
+ * What the library knows about one glass element — for tuning panels that
+ * let you click a control on the page to inspect it (the showcase's
+ * Inspector does this).
+ *   group     the element's glass group ("button", "switchKnob"…)
+ *   renderer  how it is drawn right now:
+ *             "live"  — live SVG filter (Chromium)
+ *             "tint"  — tint only (nested live glass)
+ *             "webgl" — drawn on a WebGL canvas
+ *             "css"   — the CSS fallback (no WebGL glass drawn for it)
+ *   props     a copy of its per-element props
+ * Returns null for an element that has no glass.
+ * @param {Element|null|undefined} el
+ * @returns {{ group: string, renderer: 'live'|'tint'|'webgl'|'css', props: object } | null}
+ */
+export function getGlassInfo(el) {
+  const id = Number(el?.dataset?.glassId);
+  const e = id ? getEntry(id) : null;
+  if (!e) return null;
+  const renderer = e.liveMode === 'live' ? 'live' : e.liveMode === 'tint' ? 'tint' : e.el.hasAttribute('data-glass-drawn') ? 'webgl' : 'css';
+  return { group: e.group, renderer, props: { ...(e.props || {}) } };
+}

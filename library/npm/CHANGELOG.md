@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.5.1 — 2026-11-23
+
+- New: segmented control (<GlassSegmented> / createSegmented), stepper with the value between − and + (<GlassStepper>), range slider with two knobs and a vertical slider (<GlassRangeSlider>), and a Control Center-style block slider (<GlassBlockSlider>: relative drag, rubber-band ends, black icon by default).
+- New: popover, menu and select (<GlassPopover>, <GlassMenu>, <GlassSelect>) — one glass panel that grows out of its button and shrinks back into it — plus tooltips (<GlassTooltip>), an iOS bottom sheet with detents (<GlassSheet>) and toasts (useGlassToaster()). All have plain-JS create… versions and TypeScript types; they live in one shared overlay above the page.
+- New: the script build (window.Glassparency) has all the new controls: the create… functions, toast(), open() / close(), and HTML markup (data-glassparency-segmented, -stepper, -range, -block, -select, -popover, -menu, -tooltip, -sheet, -open) with native inputs kept hidden and in sync.
+- New: getGlassInfo(el) in "glassparency/devtools": an element's glass group, how it is drawn right now (live / tint / webgl / css) and its per-element props — for tuning panels that pick a control on the page.
+- Fixed: glass whose layer or tier changes through its per-element props now moves to the new layer's canvas (it stayed drawn on the old one).
+- Fixed: reserveSnapshotArea() / glassMorph no longer force a new page picture when the current one already covers the area (it froze large pages for 0.25–1 s at the start of every morph).
+
+## 1.5.1 — 2026-11-23
+
+- New: segmented control (<GlassSegmented> / createSegmented), stepper with the value between − and + (<GlassStepper>), range slider with two knobs and a vertical slider (<GlassRangeSlider>), and a Control Center-style block slider (<GlassBlockSlider>: relative drag, rubber-band ends, black icon by default).
+- New: popover, menu and select (<GlassPopover>, <GlassMenu>, <GlassSelect>) — one glass panel that grows out of its button and shrinks back into it — plus tooltips (<GlassTooltip>), an iOS bottom sheet with detents (<GlassSheet>) and toasts (useGlassToaster()). All have plain-JS create… versions and TypeScript types; they live in one shared overlay above the page.
+- New: the script build (window.Glassparency) has all the new controls: the create… functions, toast(), open() / close(), and HTML markup (data-glassparency-segmented, -stepper, -range, -block, -select, -popover, -menu, -tooltip, -sheet, -open) with native inputs kept hidden and in sync.
+- New: getGlassInfo(el) in "glassparency/devtools": an element's glass group, how it is drawn right now (live / tint / webgl / css) and its per-element props — for tuning panels that pick a control on the page.
+- Fixed: glass whose layer or tier changes through its per-element props now moves to the new layer's canvas (it stayed drawn on the old one).
+- Fixed: reserveSnapshotArea() / glassMorph no longer force a new page picture when the current one already covers the area (it froze large pages for 0.25–1 s at the start of every morph).
+
 ## 1.5.0 — 2026-11-20
 
 - Fixed: WebGL buttons and tab bars froze their refraction until scrolling stopped (worst in Chrome on pages with many live controls). Text-colour readbacks no longer run mid-scroll, auto quality no longer drops (and recompiles shaders) during a scroll, and a busy progress bar no longer makes every canvas redraw every frame.

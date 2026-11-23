@@ -28,7 +28,7 @@ Under the hood:
 
 - [What it looks like](#what-it-looks-like)
 - [Three ways to use it](#three-ways-to-use-it) — React, one `<script>` on any site, or the `<glass-ui>` element
-- [Switches and sliders](#switches-and-sliders) · [More controls](#checkboxes-radios-text-fields-tab-bars-sidebars-and-progress-bars) · [Styles](#styles-default-crystal-frosted)
+- [Switches and sliders](#switches-and-sliders) · [More controls](#checkboxes-radios-text-fields-tab-bars-sidebars-and-progress-bars) · [Segmented, stepper, range & block sliders](#segmented-control-stepper-range-and-block-sliders) · [Popovers, menus, tooltips, sheets & toasts](#popovers-menus-selects-tooltips-sheets-and-toasts) · [Styles](#styles-default-crystal-frosted)
 - [Squish & stretch](#squish--stretch) · [Shape springs](#shape-springs) · [Morph any element](#morph-any-element-into-another-glassmorph) · [Readable text](#readable-text-automatically-textcolor-auto)
 - [Built-in groups](#built-in-groups-presets) · [Configuration](#configuration)
 - [How it works](#how-it-works-and-what-your-page-needs) · [API](#api) · [Requirements](#requirements)
@@ -261,6 +261,149 @@ import { GlassCheckbox, GlassRadio, GlassTextField, GlassTabBar, GlassSidebar, G
 
 ---
 
+## Segmented control, stepper, range and block sliders
+
+- **Segmented control:** a small glass capsule with a sliding lens on the picked segment (Day / Week / Month).
+  Tap a segment, or press and slide the lens across. It's the tab bar's lens in compact proportions (32 px tall,
+  text segments) and on the `float` layer like the switch, so it sits in the page like any control.
+- **Stepper:** one glass capsule reading **− value +**. Tap for one step; hold to repeat, faster and faster. The
+  capsule leans towards the half you press. A half at its limit is dimmed (`wrap` goes round instead).
+  `showValue={false}` hides the number; `format` writes it your way (`(v) => v + ' kg'`).
+- **Range slider:** the slider with two knobs (`value={[low, high]}`). They never cross; press nearest the one
+  you want. Same parts, groups and pressed-glass knobs as `<GlassSlider>`.
+- **Vertical slider:** `orientation="vertical"` with one knob (`value={40}`); the value grows upwards.
+- **Block slider:** Control Center's thick slider. The white fill *is* the value (no knob). Drag anywhere and the
+  value moves **with** your finger (relative, not a jump); tap to jump. Pull past either end and the block
+  stretches like rubber, then springs back. Its icon (the children) is black by default — set
+  `--gp-block-icon` (or your own `color`) to change it.
+
+```jsx
+import { GlassSegmented, GlassStepper, GlassRangeSlider, GlassBlockSlider } from 'glassparency';
+
+<GlassSegmented value={range} onChange={setRange}>
+  {['Day', 'Week', 'Month', 'Year'].map((t) => <button key={t} data-gp-item role="tab">{t}</button>)}
+</GlassSegmented>
+<GlassStepper value={qty} onChange={setQty} min={0} max={20} aria-label="Quantity" />
+<GlassRangeSlider value={price} onChange={setPrice} min={0} max={500} aria-label="Price" />   {/* price = [50, 300] */}
+<GlassRangeSlider orientation="vertical" value={level} onChange={setLevel} style={{ height: 160 }} />
+<GlassBlockSlider value={brightness} onChange={setBrightness} aria-label="Brightness"><SunIcon /></GlassBlockSlider>
+<GlassBlockSlider orientation="horizontal" value={volume} onChange={setVolume}><SpeakerIcon /></GlassBlockSlider>
+```
+
+- Sizes: segmented 32 px tall (`width` with CSS), stepper 34 px tall, range 28 px tall, vertical 28 × 160, block
+  72 × 160 (horizontal 220 × 56). Override them with your own CSS.
+- `glassProps` parts: segmented `bar`, `lens`, `lensActive`; stepper `body`; range `track` (the knobs follow its
+  style, like the slider); block `body`.
+- Two knobs or one, and the orientation, are fixed per instance (change them and the control is re-created).
+- **Without React:** `createSegmented`, `createStepper`, `createRangeSlider`, `createBlockSlider` (`(el, opts)`,
+  each returns `{ update, destroy, value }`).
+- **Script build:** mark plain HTML. Native inputs stay in the page, hidden and in sync (forms and `input` /
+  `change` listeners keep working):
+
+```html
+<div data-glassparency-segmented><button>Day</button><button aria-selected="true">Week</button><button>Month</button></div>
+<input type="number" min="0" max="20" value="3" data-glassparency-stepper aria-label="Quantity">
+<div data-glassparency-range aria-label="Price"><input type="range" value="20"><input type="range" value="80"></div>
+<div data-glassparency-range data-glassparency-vertical><input type="range" value="40" aria-label="Level"></div>
+<div data-glassparency-block aria-label="Brightness"><svg…/><input type="range" value="60"></div>
+```
+
+  The segmented control fires `glassparency:change` (`event.detail.index`); a block slider also fires it with
+  `event.detail.value`. `data-glassparency-horizontal` lays a block slider down; `data-glassparency-wrap` makes a
+  stepper wrap round.
+
+---
+
+## Popovers, menus, selects, tooltips, sheets and toasts
+
+All of these appear **above everything** on the page: they live in one shared overlay on `<body>` with its own
+glass canvas (the `modal` layer), started once while the page is idle after the first one is created and kept
+from then on, so nothing waits for a canvas when you open one.
+
+- **Popover:** a glass button whose panel grows out of it. It's **one glass**: the panel starts exactly on the
+  button (its box and its look), springs out over it to full size while its look turns into the panel's, and its
+  content fades in. Closing plays it backwards and lands on the button, which takes over again in that same frame.
+  The button's own glass steps aside while the panel stands in for it, so there are never two glasses or two
+  labels on screen (like iOS 26 menus). Escape or a press outside closes it.
+- **Menu:** a popover of items. A soft highlight **slides** between items as you hover or use the arrow keys;
+  Enter / click picks, a letter jumps to an item, Escape / Tab close. `data-gp-keep-open` on an item keeps the
+  menu open when it's picked.
+- **Select:** a menu that remembers its value: a ✓ on the picked option, and it opens with that option
+  highlighted.
+- **Tooltip:** a small glass capsule above the element after a short hover (or keyboard focus), popping in with a
+  bounce. Once one has shown, the next shows at once for a moment (like macOS).
+- **Sheet:** an iOS bottom sheet. It rests at **detents** (fractions of the window height); drag its top — a flick
+  carries it to the next detent. The glass gets thicker and frostier, and the page darker, as it rises. Drag it
+  down, tap the dimmed page, or press Escape to close it.
+- **Toasts:** banners that drop in from the top with a springy stretch, stack (3 at most), and leave after a few
+  seconds — paused while hovered or held. Swipe one up to dismiss it.
+
+```jsx
+import { GlassPopover, GlassMenu, GlassSelect, GlassTooltip, GlassSheet, useGlassToaster } from 'glassparency';
+
+<GlassPopover label="Info">This panel grew out of its button.</GlassPopover>
+
+<GlassMenu label="Actions" onSelect={(i, item) => run(item.textContent)}>
+  <button role="menuitem">New note</button>
+  <button role="menuitem">Share…</button>
+  <button role="menuitem">Delete</button>
+</GlassMenu>
+
+<GlassSelect
+  value={sort}
+  onChange={setSort}
+  options={[{ value: 'recent', label: 'Most recent' }, { value: 'name', label: 'Name' }]}
+  aria-label="Sort by"
+/>
+
+<GlassTooltip text="Share"><button aria-label="Share"><ShareIcon /></button></GlassTooltip>
+
+<GlassSheet open={open} onClose={() => setOpen(false)} detents={[0.4, 0.9]}>
+  <h3>Details</h3>…
+</GlassSheet>
+
+const toast = useGlassToaster();
+toast.show({ title: 'Saved', body: 'Your changes are saved.', icon: '<svg …>…</svg>' });
+```
+
+- The trigger is a glass button (`triggerGroup`, default `button`; `triggerClassName`, `triggerGlass` for its
+  per-element props). The panel takes `className`, `group` (`popover` / `menu`) and `glassProps`.
+- `placement`: `"bottom"` grows down from the button's top edge, `"top"` up from its bottom edge, `"auto"`
+  (default) down unless only up fits. `align`: `"start"` (default), `"center"`, `"end"`. Panels stay inside the
+  window and follow the button while the page scrolls.
+- Tooltip: `placement` `"top"` (default, flips below when there's no room) or `"bottom"`, `delay` (ms, default 500).
+- Sheet: `detents` (default `[0.45, 0.92]`), `detent` (index to open at / move to), `onDetentChange`. Its look
+  blends from group `sheet` (lowest detent) to `sheetFull` (highest).
+- Toasts: `show({ title, body, icon, duration, props })` returns a function that dismisses that toast;
+  `duration: 0` keeps it until it's swiped away. `useGlassToaster({ max, duration })` sets the defaults.
+- **Without React:** `createPopover(button, panel, opts)`, `createMenu(button, panel, opts)`,
+  `createSelect(button, panel, opts)` (options are the panel's children with `data-value`),
+  `createTooltip(el, { text })`, `createSheet(el, opts)` (`open(detent)`, `close()`, `snapTo(i)`),
+  `createToaster(opts)` (`show()`, `clear()`). `getGlassOverlay()` returns the shared overlay element (to portal
+  your own panel into it).
+- **Script build:** mark plain HTML. Give the button its own glass with `data-glassparency="button"` as usual;
+  `data-glassparency-panel-props='{…}'` on it styles the panel. Put `hidden` on panels so they don't flash before
+  the script loads.
+
+```html
+<select data-glassparency-select aria-label="Sort"><option value="recent">Most recent</option>…</select>
+<button data-glassparency="button" data-glassparency-menu="acts">Actions</button>
+<div id="acts" hidden><button role="menuitem">Copy</button><button role="menuitem">Delete</button></div>
+<button data-glassparency="button" data-glassparency-popover="info">Info</button>
+<div id="info" hidden>…</div>
+<button data-glassparency-tooltip="Share" aria-label="Share">…</button>
+<div id="details" data-glassparency-sheet data-glassparency-detents="0.4,0.9" hidden>…</div>
+<button data-glassparency-open="details">Details</button>
+<script>Glassparency.toast({ title: 'Saved', body: 'Your changes are saved.' });</script>
+```
+
+  The `<select>` stays in the page, hidden and in sync. A menu fires `glassparency:select` (`detail.index`,
+  `detail.item`) on its button; popovers and menus fire `glassparency:toggle` (`detail.open`); a sheet fires
+  `glassparency:close`. `data-glassparency-open="<id>"` opens a sheet, popover or menu, and so do
+  `Glassparency.open(id)` / `Glassparency.close(id)`. `data-glassparency-placement` / `-align` place a panel.
+
+---
+
 ## Styles: default, crystal, frosted
 
 Every group has a `style`:
@@ -414,6 +557,13 @@ A **group** is a named look. These come built in. List them with `glassGroupName
 | `tabBar`, `tabLens`, `tabLensActive` | `<GlassTabBar>`: the bar, its lens at rest / while dragged |
 | `sidebarPanel`, `sidebarLens`, `sidebarLensActive` | `<GlassSidebar>` parts |
 | `progressTrack`, `progressFill`, `progressBead` | `<GlassProgress>` parts |
+| `segmented`, `segmentedLens`, `segmentedLensActive` | `<GlassSegmented>`: the capsule, its lens at rest / while dragged |
+| `stepper` | `<GlassStepper>`: the − value + capsule |
+| `blockSlider` | `<GlassBlockSlider>`: the block (the white fill is CSS, `--gp-block-fill`) |
+| `popover` | `<GlassPopover>` panel (`<GlassMenu>` / `<GlassSelect>` use `menu`) |
+| `tooltip` | `<GlassTooltip>` |
+| `sheet`, `sheetFull` | `<GlassSheet>`: at its lowest / highest detent (blended between) |
+| `toast` | Toasts from `useGlassToaster()` / `createToaster()` |
 | `chip`, `alert` | Small capsules |
 | `topbar`, `headerButton` | A floating header capsule and the buttons in it |
 | `dock`, `menu` | Floating panels (the `float` layer) |
@@ -658,6 +808,10 @@ Your own CSS is used when:
 | `createSwitch(el, opts)`, `createSlider(el, opts)` | The same without React |
 | `<GlassCheckbox>`, `<GlassRadio>`, `<GlassTextField>`, `<GlassTabBar>`, `<GlassSidebar>`, `<GlassProgress>` | More controls (see "Checkboxes, radios…") |
 | `createCheckbox`, `createRadio`, `createTextField`, `createTabBar`, `createSidebar`, `createLensBar`, `createProgress` | The same without React |
+| `<GlassSegmented>`, `<GlassStepper>`, `<GlassRangeSlider>`, `<GlassBlockSlider>` | Segmented control, stepper, range / vertical slider, block slider |
+| `createSegmented`, `createStepper`, `createRangeSlider`, `createBlockSlider` | The same without React |
+| `<GlassPopover>`, `<GlassMenu>`, `<GlassSelect>`, `<GlassTooltip>`, `<GlassSheet>`, `useGlassToaster()` | Popover, menu, select, tooltip, bottom sheet, toasts |
+| `createPopover`, `createMenu`, `createSelect`, `createTooltip`, `createSheet`, `createToaster`, `getGlassOverlay` | The same without React |
 | `createSquish(el, readCfg)`, `stretchFor(ux, uy, amount)` | Squish & stretch for your own animations |
 | `attachGlass(el, group, props?) → handle` | The same without React. The handle: `setProps(props)`, `merge(partial)`, `getProps()`, `setState({ hover, pressed })` (the same look, press grow and glow the pointer gives), `ripple(x?, y?)`, `destroy()`, `el`, `id` |
 | `setGlassProps(el, props)` | Change an element's look without a render (animations) |

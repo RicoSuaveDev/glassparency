@@ -98,7 +98,20 @@ export function reserveSnapshotArea(key, rect) {
     return;
   }
   reserved.set(key, rect);
+  // The picture we have already covers it: no new one. Taking one anyway
+  // blocked the page for as long as a capture takes (~0.25–1 s on a big
+  // page) right as a menu / popover started its morph — it opened late and
+  // stuttered. (Changes to the page still ask for new pictures as before.)
+  if (pictureCoversRect(rect)) return;
   scheduleSnapshot(0);
+}
+
+/** Does the current picture cover rect (window px) at today's scroll? */
+function pictureCoversRect(r) {
+  if (!snapshot.canvas) return false;
+  const x = snapshot.x - (window.scrollX - snapshot.scrollX);
+  const y = snapshot.y - (window.scrollY - snapshot.scrollY);
+  return x <= r.left && y <= r.top && x + snapshot.w >= r.right && y + snapshot.h >= r.bottom;
 }
 
 /**

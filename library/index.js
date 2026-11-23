@@ -30,6 +30,22 @@ export { useShapeSpring, useGlassMorph } from './useMotion';
 export { defineGlassElement, GLASS_ELEMENT } from './element';
 // Liquid Glass switch + slider (React components, and the plain-JS versions they use).
 export { GlassSwitch, GlassSlider, GlassCheckbox, GlassRadio, GlassTextField, GlassTabBar, GlassSidebar, GlassProgress } from './GlassControls';
+// Segmented control, stepper, range / vertical / block sliders, popover,
+// menu, select, tooltip, bottom sheet and toasts (pickers.js, overlays.js).
+export {
+  GlassSegmented,
+  GlassStepper,
+  GlassRangeSlider,
+  GlassBlockSlider,
+  GlassPopover,
+  GlassMenu,
+  GlassSelect,
+  GlassTooltip,
+  GlassSheet,
+  useGlassToaster,
+} from './GlassControls';
+export { createSegmented, createStepper, createRangeSlider, createBlockSlider } from './pickers';
+export { createPopover, createMenu, createSelect, createTooltip, createSheet, createToaster, getGlassOverlay } from './overlays';
 export { createSwitch, createSlider } from './controls';
 // Checkboxes, radios, text fields, tab bars, sidebars, progress bars (plain JS).
 export { createCheckbox, createRadio, createTextField, createLensBar, createTabBar, createSidebar, createProgress } from './widgets';

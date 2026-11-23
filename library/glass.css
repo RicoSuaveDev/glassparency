@@ -634,6 +634,409 @@ html[data-glass='on'] [data-glass-active][data-glass-icon-size] svg {
   pointer-events: none;
 }
 
+/* ==========================================================================
+ * Segmented control, stepper, range / vertical / block sliders (pickers.js)
+ * and popover, menu, select, tooltip, sheet, toasts (overlays.js) — layout +
+ * the CSS look (no WebGL), always on. :where() = zero specificity, so a
+ * site's own CSS wins; these come after the lens-bar rules on purpose (same
+ * specificity, later wins).
+ * ========================================================================== */
+
+/* Segmented control: a compact lens bar — one row, short, text segments. */
+:where([data-gp-segmented]) {
+  display: inline-flex;
+  min-height: 32px;
+  padding: 2px;
+  z-index: auto;
+  --gp-active-filter: none;
+}
+:where([data-gp-segmented]) > :where([data-gp-item]) {
+  flex: 1 1 0;
+  flex-direction: row;
+  gap: 6px;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+:where([data-gp-segmented]) :where([data-gp-wipe='accent']) {
+  color: inherit;
+  color: var(--gp-segment-on, var(--gp-item-base, currentColor));
+}
+:where([data-gp-segmented]) > :where([data-gp-lens]) {
+  background: rgba(255, 255, 255, calc(0.95 - 0.85 * var(--gp-lift, 0)));
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.14), inset 0 0 0 1px rgba(255, 255, 255, calc(0.6 * var(--gp-lift, 0)));
+}
+
+/* Stepper: [ − | + ] */
+:where([data-gp-stepper]) {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+  box-sizing: border-box;
+  height: 34px;
+  border-radius: 999px;
+  background: var(--gp-stepper, rgba(120, 120, 128, 0.2));
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  touch-action: manipulation;
+}
+:where([data-gp-stepper]) > :where([data-gp-step]) {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color 0.12s;
+}
+:where([data-gp-stepper]) > :where([data-gp-step]) > svg {
+  width: 16px;
+  height: 16px;
+}
+:where([data-gp-stepper]) > :where([data-gp-step][data-gp-pressed]) {
+  background: rgba(120, 120, 128, 0.22);
+}
+:where([data-gp-stepper]) > :where([data-gp-step][data-gp-off]) {
+  opacity: 0.35;
+  cursor: default;
+}
+/* The value, between − and + */
+:where([data-gp-stepper-value]) {
+  position: relative;
+  z-index: 1;
+  align-self: center;
+  min-width: 2.4ch;
+  padding: 0 2px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  pointer-events: none;
+}
+:where([data-gp-stepper][aria-disabled='true']) {
+  opacity: 0.45;
+}
+
+/* Range / vertical slider: same parts as the slider (track → fill → knobs). */
+:where([data-gp-range]) {
+  position: relative;
+  display: block;
+  box-sizing: border-box;
+  min-width: 80px;
+  height: 28px;
+  cursor: pointer;
+  touch-action: pan-y;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+:where([data-gp-range][aria-orientation='vertical']) {
+  display: inline-block;
+  min-width: 0;
+  width: 28px;
+  height: 160px;
+  touch-action: pan-x;
+}
+:where([data-gp-range][aria-orientation='vertical']) > :where([data-gp-track]) {
+  left: calc(50% - 2.5px);
+  right: auto;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  height: auto;
+}
+:where([data-gp-range][aria-disabled='true']) {
+  opacity: 0.45;
+  cursor: default;
+}
+:where([data-gp-range]) :where([data-gp-knob]):is(:focus, :focus-visible) {
+  outline: none;
+}
+
+/* Block slider (Control Center): the glass block, a clipped white fill, the icon. */
+:where([data-gp-block]) {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  justify-content: flex-start;
+  box-sizing: border-box;
+  width: 72px;
+  height: 160px;
+  padding: 16px 0;
+  border-radius: var(--gp-block-r, 28px);
+  background: var(--gp-block, rgba(120, 120, 128, 0.32));
+  /* Icon colour: black by default (it sits on the white fill). Change it
+     with --gp-block-icon, or the site's own color on the slider. */
+  color: var(--gp-block-icon, #000000);
+  cursor: pointer;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+:where([data-gp-block='horizontal']) {
+  flex-direction: row;
+  width: 220px;
+  height: 56px;
+  padding: 0 18px;
+}
+:where([data-gp-block]) > :not([data-gp-block-clip]) {
+  position: relative;
+  z-index: 1;
+  pointer-events: none;
+}
+:where([data-gp-block-clip]) {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+:where([data-gp-block-fill]) {
+  position: absolute;
+  background: var(--gp-block-fill, rgba(255, 255, 255, 0.94));
+}
+:where([data-gp-block]):is(:focus, :focus-visible) {
+  outline: none;
+}
+
+/* Popover / menu / select: the panel opens next to its button (fixed). */
+:where([data-gp-anchor-wrap]) {
+  position: relative;
+  display: inline-block;
+}
+:where([data-gp-popover]) {
+  position: fixed;
+  z-index: 60;
+  box-sizing: border-box;
+  min-width: 180px;
+  max-width: min(340px, calc(100vw - 16px));
+  padding: 14px 16px;
+  border-radius: 22px;
+  background: color-mix(in srgb, Canvas 86%, transparent);
+  color: inherit;
+}
+:where([data-gp-popover])[hidden] {
+  display: none !important; /* (a site's display: flex on the panel must not show it) */
+}
+:where([data-gp-popover]):is(:focus, :focus-visible) {
+  outline: none;
+}
+:where([data-gp-menu]) {
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  padding: 6px;
+}
+:where([data-gp-menu]) > :where([role='menuitem'], [role='menuitemradio'], [role='menuitemcheckbox'], [role='option'], [data-gp-item]) {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 12px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+:where([data-gp-menu]) > :where([aria-disabled='true'], :disabled) {
+  opacity: 0.4;
+  cursor: default;
+}
+:where([data-gp-menu]) > :where(*):is(:focus, :focus-visible) {
+  outline: none;
+}
+/* The sliding highlight under the hovered / arrowed item. */
+:where([data-gp-menu-hl]) {
+  position: absolute;
+  z-index: 0;
+  border-radius: 12px;
+  background: rgba(120, 120, 128, calc(0.2 * var(--gp-on, 0)));
+  pointer-events: none;
+}
+/* Select: a ✓ in front of the picked option (room kept on the others). */
+:where([data-gp-select]) :where([data-gp-check-mark]) {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  visibility: hidden;
+  color: var(--gp-accent, #0a84ff);
+}
+:where([data-gp-select]) > :where([data-gp-selected]) :where([data-gp-check-mark]) {
+  visibility: visible;
+}
+:where([data-gp-select-trigger]) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+:where([data-gp-chevron]) {
+  width: 14px;
+  height: 14px;
+  opacity: 0.7;
+}
+
+/* Shared overlay for tooltips, sheets and toasts (above everything). */
+:where([data-gp-overlay]) {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  pointer-events: none;
+}
+/* The panel's content fades in once it has (nearly) grown to full size
+   (overlays.js writes --gp-pop-content, 0 … 1). */
+:where([data-gp-popover]) > * {
+  opacity: var(--gp-pop-content, 1);
+}
+/* A popover's button while its panel stands in for it (the panel covers it,
+   starting as the button): its label fades out, and nothing of its own look
+   shows — no fallback background, no CSS-glass layers. Fades back in when
+   the panel has landed on it again. */
+:where([aria-haspopup]) > * {
+  transition: opacity 0.14s ease;
+}
+[data-glass-morphed] {
+  background: transparent !important;
+  box-shadow: none !important;
+  border-color: transparent !important;
+}
+[data-glass-morphed] > *,
+[data-glass-morphed]::before,
+[data-glass-morphed]::after {
+  opacity: 0 !important;
+}
+:where([data-gp-overlay]) > :where([data-gp-popover]) {
+  z-index: 5; /* above the overlay's glass canvas (its host is z 0) */
+  pointer-events: auto;
+}
+:where([data-gp-tooltip-anchor]) {
+  display: inline-flex;
+}
+:where([data-gp-tooltip]) {
+  position: fixed;
+  z-index: 4;
+  box-sizing: border-box;
+  max-width: 260px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  background: color-mix(in srgb, Canvas 80%, transparent);
+  color: CanvasText;
+  font: 500 12px/1.3 system-ui, -apple-system, sans-serif;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: var(--gp-on, 1);
+}
+:where([data-gp-tooltip])[hidden] {
+  display: none !important; /* (a site's display: flex on the panel must not show it) */
+}
+
+/* Bottom sheet. */
+:where([data-gp-sheet-scrim]) {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: auto;
+}
+:where([data-gp-sheet]) {
+  position: fixed;
+  z-index: 2;
+  box-sizing: border-box;
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 22px 22px 32px;
+  border-radius: 34px;
+  background: color-mix(in srgb, Canvas calc(55% + 35% * var(--gp-sheet-t, 0)), transparent);
+  color: CanvasText;
+  pointer-events: auto;
+  touch-action: none; /* (dragging moves the sheet; no page scroll under it) */
+}
+:where([data-gp-sheet])[hidden] {
+  display: none !important; /* (a site's display: flex on the panel must not show it) */
+}
+:where([data-gp-sheet]):is(:focus, :focus-visible) {
+  outline: none;
+}
+:where([data-gp-sheet-grabber]) {
+  position: absolute;
+  top: 7px;
+  left: calc(50% - 18px);
+  width: 36px;
+  height: 5px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.28;
+}
+
+/* Toasts: a stack at the top centre. */
+:where([data-gp-toasts]) {
+  position: fixed;
+  top: 12px;
+  left: 0;
+  right: 0;
+  z-index: 3;
+  height: 0;
+}
+:where([data-gp-toast]) {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-sizing: border-box;
+  width: min(380px, calc(100vw - 24px));
+  padding: 12px 16px;
+  border-radius: 24px;
+  background: color-mix(in srgb, Canvas 84%, transparent);
+  color: CanvasText;
+  font: 13px/1.35 system-ui, -apple-system, sans-serif;
+  translate: -50% -120px;
+  transform-origin: 50% 0;
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+  cursor: grab;
+}
+:where([data-gp-toast-icon]) {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: var(--gp-accent, #0a84ff);
+  color: #fff;
+}
+:where([data-gp-toast-icon]) > svg {
+  width: 18px;
+  height: 18px;
+}
+:where([data-gp-toast-text]) {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+:where([data-gp-toast-text]) > strong {
+  font-weight: 600;
+}
+:where([data-gp-toast-text]) > span {
+  opacity: 0.75;
+}
+
 /* <glass-ui> (element.js): a block, unless the site's CSS says otherwise. */
 :where(glass-ui) {
   display: block;

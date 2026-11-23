@@ -369,6 +369,278 @@ export declare function createProgress(
   opts?: ProgressOpts
 ): GlassWidgetController<ProgressOpts> & { readonly value: number | null };
 
+// --- Segmented control, stepper, range / vertical / block sliders (pickers.js) ---------------
+
+/** Segmented control: a compact lens bar (Day / Week / Month). Groups "segmented", "segmentedLens", "segmentedLensActive". */
+export type GlassSegmentedProps = {
+  /** Picked segment index. */
+  value?: number;
+  defaultValue?: number;
+  onChange?: (index: number) => void;
+  /** Lens size while pressed (default 1.16). */
+  lensScale?: number;
+  /** px between the control's edge and the lens (default 2). */
+  inset?: number;
+  groups?: GlassLensBarGroups;
+  glassProps?: { bar?: GlassProps; lens?: GlassProps; lensActive?: GlassProps };
+  /** The segments: give each one data-gp-item. */
+  children?: ReactNode;
+} & Omit<ComponentPropsWithoutRef<'div'>, 'onChange' | 'defaultValue'>;
+/** Liquid Glass segmented control: tap a segment, or press and slide the lens across. */
+export declare const GlassSegmented: ForwardRefExoticComponent<GlassSegmentedProps & RefAttributes<HTMLDivElement>>;
+
+export interface GlassStepperGroups { body?: string /* "stepper" */ }
+export type GlassStepperProps = {
+  value?: number;
+  defaultValue?: number;
+  min?: number;
+  max?: number;
+  step?: number;
+  /** Past max goes to min (and back). Default false: the half at a limit is dimmed. */
+  wrap?: boolean;
+  /** The number between − and + (default true). */
+  showValue?: boolean;
+  /** How the number is written (default String). */
+  format?: (value: number) => string;
+  onChange?: (value: number) => void;
+  disabled?: boolean;
+  groups?: GlassStepperGroups;
+  glassProps?: { body?: GlassProps };
+} & Omit<ComponentPropsWithoutRef<'div'>, 'onChange' | 'defaultValue'>;
+/** Liquid Glass stepper (− value +): tap for one step, hold to repeat faster and faster. */
+export declare const GlassStepper: ForwardRefExoticComponent<GlassStepperProps & RefAttributes<HTMLDivElement>>;
+
+export type GlassRangeValue = number | [number, number];
+export type GlassRangeSliderProps = {
+  /** [low, high] = two knobs; a number = one knob. Fixed per instance (changing it re-creates the slider). */
+  value?: GlassRangeValue;
+  defaultValue?: GlassRangeValue;
+  min?: number;
+  max?: number;
+  step?: number;
+  /** "vertical": standing up, the value grows upwards. Default "horizontal". */
+  orientation?: 'horizontal' | 'vertical';
+  onChange?: (value: GlassRangeValue) => void;
+  onChangeEnd?: (value: GlassRangeValue) => void;
+  disabled?: boolean;
+  groups?: GlassSliderGroups;
+  glassProps?: { track?: GlassProps };
+} & Omit<ComponentPropsWithoutRef<'div'>, 'onChange' | 'defaultValue'>;
+/** Liquid Glass slider with two knobs (they never cross), or one standing up. Same parts and groups as <GlassSlider>. */
+export declare const GlassRangeSlider: ForwardRefExoticComponent<GlassRangeSliderProps & RefAttributes<HTMLDivElement>>;
+
+export interface GlassBlockSliderGroups { body?: string /* "blockSlider" */ }
+export type GlassBlockSliderProps = {
+  value?: number;
+  defaultValue?: number;
+  min?: number;
+  max?: number;
+  step?: number;
+  /** Default "vertical" (72 × 160); "horizontal" (220 × 56). Size it with CSS. */
+  orientation?: 'vertical' | 'horizontal';
+  onChange?: (value: number) => void;
+  onChangeEnd?: (value: number) => void;
+  disabled?: boolean;
+  groups?: GlassBlockSliderGroups;
+  glassProps?: { body?: GlassProps };
+  /** An icon, drawn at the start (black by default: --gp-block-icon or your own color changes it). */
+  children?: ReactNode;
+} & Omit<ComponentPropsWithoutRef<'div'>, 'onChange' | 'defaultValue'>;
+/** Control Center-style block slider: the white fill is the value. Drag (it moves with your finger), tap to jump; it stretches past the ends. */
+export declare const GlassBlockSlider: ForwardRefExoticComponent<GlassBlockSliderProps & RefAttributes<HTMLDivElement>>;
+
+type SegmentedOpts = LensBarOpts;
+type StepperOpts = { value?: number; min?: number; max?: number; step?: number; disabled?: boolean; wrap?: boolean; showValue?: boolean; format?: (value: number) => string; onChange?: (value: number) => void; groups?: GlassStepperGroups; props?: { body?: GlassProps } };
+type RangeSliderOpts = { value?: GlassRangeValue; min?: number; max?: number; step?: number; orientation?: 'horizontal' | 'vertical'; disabled?: boolean; onChange?: (value: GlassRangeValue) => void; onChangeEnd?: (value: GlassRangeValue) => void; groups?: GlassSliderGroups; props?: { track?: GlassProps } };
+type BlockSliderOpts = { value?: number; min?: number; max?: number; step?: number; orientation?: 'vertical' | 'horizontal'; disabled?: boolean; onChange?: (value: number) => void; onChangeEnd?: (value: number) => void; groups?: GlassBlockSliderGroups; props?: { body?: GlassProps } };
+/** Plain-JS segmented control: el's [data-gp-item] children are the segments. */
+export declare function createSegmented(el: HTMLElement, opts?: SegmentedOpts): GlassWidgetController<SegmentedOpts> & { readonly value: number };
+/** Plain-JS stepper on an empty <div> (the − / value / + parts are added). */
+export declare function createStepper(el: HTMLElement, opts?: StepperOpts): GlassWidgetController<StepperOpts> & { readonly value: number };
+/** Plain-JS range (two knobs) or vertical slider on a <div>. */
+export declare function createRangeSlider(el: HTMLElement, opts?: RangeSliderOpts): GlassWidgetController<RangeSliderOpts> & { readonly value: GlassRangeValue };
+/** Plain-JS block slider on a <div> (its children — an icon — stay). */
+export declare function createBlockSlider(el: HTMLElement, opts?: BlockSliderOpts): GlassWidgetController<BlockSliderOpts> & { readonly value: number };
+
+// --- Popover, menu, select, tooltip, sheet, toasts (overlays.js) --------------------------------
+// All of them live in one shared overlay on <body>, above everything, with its own glass canvas
+// (layer "modal"). A popover / menu / select panel is ONE glass that starts on its button and grows
+// out over it; it shrinks back into the button when closed.
+
+/** The trigger button + panel props shared by <GlassPopover>, <GlassMenu> and <GlassSelect>. */
+type GlassOverlayTriggerProps = {
+  /** Glass group of the trigger button (default "button"). */
+  triggerGroup?: GlassGroupName;
+  triggerClassName?: string;
+  /** Per-element glass props for the trigger button. */
+  triggerGlass?: GlassProps;
+  /** The panel's class. */
+  className?: string;
+  /** The panel's glass group ("popover" / "menu" by default). */
+  group?: GlassGroupName;
+  /** Per-element glass props for the panel, e.g. { style: 'frosted' }. */
+  glassProps?: GlassProps;
+  /** "bottom": grows down from the button's top edge; "top": up from its bottom edge; "auto" (default): down unless only up fits. */
+  placement?: 'auto' | 'bottom' | 'top';
+  /** Lines the panel up with the button's start (default), centre or end. */
+  align?: 'start' | 'center' | 'end';
+  /** Accessible name for the trigger button. */
+  'aria-label'?: string;
+} & Omit<ComponentPropsWithoutRef<'span'>, 'onChange' | 'onSelect' | 'className'>;
+
+export type GlassPopoverProps = GlassOverlayTriggerProps & {
+  /** The trigger button's content. */
+  label: ReactNode;
+  /** The panel's content. */
+  children?: ReactNode;
+  onOpenChange?: (open: boolean) => void;
+};
+/** Liquid Glass popover: a glass button whose panel grows out of it. Escape or a press outside closes it. */
+export declare function GlassPopover(props: GlassPopoverProps): JSX.Element;
+
+export type GlassMenuProps = GlassOverlayTriggerProps & {
+  label: ReactNode;
+  /** The items: <button role="menuitem">…</button> (data-gp-keep-open: picking it doesn't close the menu). */
+  children?: ReactNode;
+  onSelect?: (index: number, item: HTMLElement) => void;
+  onOpenChange?: (open: boolean) => void;
+};
+/** Liquid Glass menu: a soft highlight slides between the items; arrows, Enter, Escape and type-ahead work. */
+export declare function GlassMenu(props: GlassMenuProps): JSX.Element;
+
+export interface GlassSelectOption {
+  value: string | number;
+  label: ReactNode;
+}
+export type GlassSelectProps = GlassOverlayTriggerProps & {
+  options: GlassSelectOption[];
+  value?: string | number;
+  /** Called with the option's value as a string. */
+  onChange?: (value: string) => void;
+  /** Shown when no option is picked (default "Choose…"). */
+  placeholder?: ReactNode;
+};
+/** Liquid Glass select (pop-up button): opens with the picked option highlighted and ticked. */
+export declare function GlassSelect(props: GlassSelectProps): JSX.Element;
+
+export type GlassTooltipProps = {
+  text: string;
+  /** Default "top" (flips below when there's no room). */
+  placement?: 'top' | 'bottom';
+  /** ms of hovering before it shows (default 500; right after another tooltip: at once). */
+  delay?: number;
+  group?: GlassGroupName;
+  glassProps?: GlassProps;
+  /** The element it describes. */
+  children?: ReactNode;
+} & Omit<ComponentPropsWithoutRef<'span'>, 'children'>;
+/** Liquid Glass tooltip on hover or keyboard focus, popping in with a bounce. */
+export declare function GlassTooltip(props: GlassTooltipProps): JSX.Element;
+
+export interface GlassSheetGroups { rest?: string /* "sheet" */; full?: string /* "sheetFull" */ }
+export type GlassSheetProps = {
+  open: boolean;
+  /** The user closed it (dragged it down, tapped the dimmed page, Escape). */
+  onClose?: () => void;
+  /** Resting heights as fractions of the window (default [0.45, 0.92]). */
+  detents?: number[];
+  /** Index into detents to open at / move to (default 0). */
+  detent?: number;
+  onDetentChange?: (index: number) => void;
+  className?: string;
+  groups?: GlassSheetGroups;
+  glassProps?: GlassProps;
+  children?: ReactNode;
+} & Omit<ComponentPropsWithoutRef<'div'>, 'children' | 'className'>;
+/** iOS-style Liquid Glass bottom sheet: drag its top (a flick jumps detents); thicker glass and a darker page as it rises. */
+export declare function GlassSheet(props: GlassSheetProps): JSX.Element | null;
+
+export interface GlassToast {
+  title?: string;
+  body?: string;
+  /** An element (cloned) or an SVG / HTML string. */
+  icon?: Element | string;
+  /** ms before it leaves (default 4000; 0 = until swiped away). */
+  duration?: number;
+  /** Per-element glass props for this toast, e.g. { style: 'crystal' }. */
+  props?: GlassProps;
+}
+export interface GlassToaster {
+  /** Shows a toast; returns a function that dismisses it. */
+  show(toast: GlassToast): () => void;
+  /** Dismisses every toast. */
+  clear(): void;
+}
+/** Toasts (banners) that drop in from the top of the window: const toast = useGlassToaster(); toast.show({ title: 'Saved' }). */
+export declare function useGlassToaster(opts?: { group?: GlassGroupName; max?: number; duration?: number }): GlassToaster;
+
+export interface GlassPopoverController {
+  readonly isOpen: boolean;
+  open(): void;
+  /** refocus: give the focus back to the button. */
+  close(refocus?: boolean): void;
+  toggle(): void;
+  /** Re-place it after its content changed size. */
+  reposition(): void;
+  update(next?: { onOpenChange?: (open: boolean) => void; props?: GlassProps }): void;
+  destroy(): void;
+}
+type PopoverOpts = {
+  group?: GlassGroupName;
+  props?: GlassProps;
+  placement?: 'auto' | 'bottom' | 'top';
+  align?: 'start' | 'center' | 'end';
+  /** false: no grow / shrink motion. */
+  morph?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  /** Called once it has fully opened. */
+  onShown?: () => void;
+  /** What gets the focus when it opens (default "first": the first focusable thing inside). */
+  focus?: 'first' | 'panel' | 'none';
+  /** false: clicks on the button don't toggle it (call open() / close() yourself). */
+  bindAnchor?: boolean;
+};
+type MenuOpts = PopoverOpts & { onSelect?: (index: number, item: HTMLElement) => void; selected?: number };
+type SelectOpts = PopoverOpts & { value?: string | number; onChange?: (value: string, index: number) => void };
+/** Plain-JS popover: `panel` grows out of `button`. */
+export declare function createPopover(button: HTMLElement, panel: HTMLElement, opts?: PopoverOpts): GlassPopoverController;
+/** Plain-JS menu: the panel's [role=menuitem] / [data-gp-item] children are the items. */
+export declare function createMenu(
+  button: HTMLElement,
+  panel: HTMLElement,
+  opts?: MenuOpts
+): Omit<GlassPopoverController, 'reposition' | 'update'> & { readonly selected: number; update(next?: { onSelect?: MenuOpts['onSelect']; selected?: number; props?: GlassProps }): void };
+/** Plain-JS select: the panel's children with data-value are the options. */
+export declare function createSelect(
+  button: HTMLElement,
+  panel: HTMLElement,
+  opts?: SelectOpts
+): { readonly isOpen: boolean; open(): void; close(refocus?: boolean): void; update(next?: { value?: string | number; onChange?: SelectOpts['onChange']; props?: GlassProps }): void; destroy(): void };
+/** Plain-JS tooltip on any element (text defaults to its aria-label). */
+export declare function createTooltip(
+  el: HTMLElement,
+  opts?: { text?: string; placement?: 'top' | 'bottom'; delay?: number; group?: GlassGroupName; props?: GlassProps }
+): { show(): void; hide(): void; update(next?: { text?: string; props?: GlassProps }): void; destroy(): void };
+export interface GlassSheetController {
+  readonly isOpen: boolean;
+  readonly detent: number;
+  /** Open at detent index i (default 0), or move there if it's open. */
+  open(i?: number): void;
+  close(): void;
+  snapTo(i: number): void;
+  update(next?: { onClose?: () => void; onDetentChange?: (index: number) => void; detents?: number[]; props?: GlassProps }): void;
+  destroy(): void;
+}
+/** Plain-JS bottom sheet: `el` is the panel with your content (moved into the overlay while open). */
+export declare function createSheet(
+  el: HTMLElement,
+  opts?: { detents?: number[]; onClose?: () => void; onDetentChange?: (index: number) => void; dim?: number; groups?: GlassSheetGroups; props?: GlassProps }
+): GlassSheetController;
+/** Plain-JS toasts. */
+export declare function createToaster(opts?: { group?: GlassGroupName; max?: number; duration?: number }): GlassToaster & { destroy(): void };
+/** The shared overlay element on <body> (e.g. to portal your own panel into it). */
+export declare function getGlassOverlay(): HTMLElement;
+
 // --- Squish & stretch (squish.js) -------------------------------------------------------------
 
 export interface GlassSquish {

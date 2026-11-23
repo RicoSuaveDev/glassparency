@@ -29,6 +29,22 @@
  * selected one is aria-selected="true" / aria-current / data-selected, and
  * picking one fires a "glassparency:change" event ({ detail: { index } }) on
  * the bar. data-glassparency-props='{"style":"crystal"}' styles any of them.
+ * The newer controls (pickers.js, overlays.js):
+ *   <div data-glassparency-segmented><button>Day</button><button aria-selected="true">Week</button>…</div>
+ *   <input type="number" min="0" max="20" value="3" data-glassparency-stepper aria-label="Quantity">
+ *   <div data-glassparency-range><input type="range" value="20"><input type="range" value="80"></div>   (two knobs)
+ *   <div data-glassparency-range data-glassparency-vertical><input type="range" value="40"></div>        (standing up)
+ *   <div data-glassparency-block><svg…/><input type="range" value="60"></div>   (Control Center; + data-glassparency-horizontal)
+ *   <select data-glassparency-select aria-label="Sort"><option value="a">A</option>…</select>
+ *   <button data-glassparency="button" data-glassparency-popover="info">Info</button>  <div id="info" hidden>…</div>
+ *   <button data-glassparency="button" data-glassparency-menu="acts">Actions</button>
+ *   <div id="acts" hidden><button role="menuitem">Copy</button>…</div>   → "glassparency:select" { index, item } on the button
+ *   <button data-glassparency-tooltip="Share" aria-label="Share">…</button>
+ *   <div id="details" data-glassparency-sheet data-glassparency-detents="0.4,0.9" hidden>…</div>
+ *   <button data-glassparency-open="details">Details</button>   (opens a sheet, popover or menu by id)
+ *   Glassparency.toast({ title: 'Saved', body: '…' })
+ * A popover / menu / select panel's look: data-glassparency-panel-props='{…}'
+ * on its button (data-glassparency-props there is the button's own glass).
  * Settings: window.GlassparencyConfig = {…} before the script, or
  * Glassparency.configure({…}) any time (same format as glass.config.json;
  * merged over the built-in presets).
@@ -46,6 +62,12 @@
  *   createSwitch(el, opts) / createSlider(el, opts)   controls by hand (controls.js)
  *   createCheckbox / createRadio / createTextField / createTabBar /
  *   createSidebar / createProgress (el, opts)          the other controls (widgets.js)
+ *   createSegmented / createStepper / createRangeSlider / createBlockSlider (el, opts)
+ *                              segmented control, stepper, range / vertical / block sliders
+ *   createPopover / createMenu / createSelect (button, panel, opts), createTooltip(el, opts),
+ *   createSheet(el, opts), createToaster(opts), getGlassOverlay()   overlays (overlays.js)
+ *   toast({ title, body, icon, duration, props })   a toast (one shared toaster)
+ *   open(elOrId) / close(elOrId)   open / close a marked sheet, popover or menu
  *   createSquish(el, readCfg)  squish & stretch for anything you move yourself
  *   createShapeSpring(el, opts)  spring an element between shapes (motion.js)
  *   glassMorph(from, to, opts) liquid-morph one element into another (motion.js)
@@ -75,6 +97,8 @@ import { reserveSnapshotArea as reserveArea } from './snapshot';
 import { createSlider, createSwitch } from './controls';
 import { createCheckbox, createProgress, createRadio, createSidebar, createTabBar, createTextField } from './widgets';
 import { createSquish } from './squish';
+import { createBlockSlider, createRangeSlider, createSegmented, createStepper } from './pickers';
+import { createMenu, createPopover, createSelect, createSheet, createToaster, createTooltip, getGlassOverlay } from './overlays';
 
 /** Declarative attributes. */
 const ATTR = 'data-glassparency';
@@ -90,7 +114,19 @@ const W = {
   field: { attr: 'data-glassparency-field', sel: '*' },
   tabbar: { attr: 'data-glassparency-tabbar', sel: '*' },
   sidebar: { attr: 'data-glassparency-sidebar', sel: '*' },
+  // The newer controls (pickers.js, overlays.js).
+  segmented: { attr: 'data-glassparency-segmented', sel: '*' },
+  stepper: { attr: 'data-glassparency-stepper', sel: 'input' },
+  range: { attr: 'data-glassparency-range', sel: '*' },
+  block: { attr: 'data-glassparency-block', sel: '*' },
+  select: { attr: 'data-glassparency-select', sel: 'select' },
+  popover: { attr: 'data-glassparency-popover', sel: '*' },
+  menu: { attr: 'data-glassparency-menu', sel: '*' },
+  tooltip: { attr: 'data-glassparency-tooltip', sel: '*' },
+  sheet: { attr: 'data-glassparency-sheet', sel: '*' },
 };
+const PANEL_PROPS_ATTR = 'data-glassparency-panel-props'; // a popover / menu / select panel's look
+const OPEN_ATTR = 'data-glassparency-open'; // a button that opens a sheet / popover / menu by id
 const WIDGETS = Object.values(W)
   .map((w) => (w.sel === '*' ? `[${w.attr}]` : `${w.sel}[${w.attr}]`))
   .join(', ');
@@ -138,6 +174,9 @@ export function stop() {
   auto.clear();
   for (const input of [...inputs.keys()]) unenhance(input);
   for (const el of [...widgets.keys()]) unwidget(el);
+  toaster?.destroy();
+  toaster = null;
+  document.removeEventListener('click', openerClick);
   reactRoot?.unmount();
   reactRoot = null;
   container?.remove();
@@ -161,6 +200,26 @@ export const mergeProps = (el, partial) => {
   mergeGlassProps(el, partial);
 };
 export { createSwitch, createSlider, createCheckbox, createRadio, createTextField, createTabBar, createSidebar, createProgress, createSquish };
+export { createSegmented, createStepper, createRangeSlider, createBlockSlider };
+export { createPopover, createMenu, createSelect, createTooltip, createSheet, createToaster, getGlassOverlay };
+
+let toaster = null; // the shared toaster behind toast()
+/** Show a toast ({ title, body, icon, duration, props }); returns a function that dismisses it. */
+export const toast = (t) => (toaster ||= createToaster()).show(t);
+
+/** A marked sheet / popover / menu, by element or id. */
+const markedCtl = (target) => {
+  const el = typeof target === 'string' ? document.getElementById(target) : target;
+  if (!el) return null;
+  if (widgets.has(el)) return widgets.get(el).ctl;
+  // A popover / menu panel: find the button that points at it.
+  for (const [btn, w] of widgets) if ((w.kind === 'popover' || w.kind === 'menu') && btn.getAttribute(W[w.kind].attr) === el.id) return w.ctl;
+  return null;
+};
+/** Open a marked sheet (or popover / menu) — by element or id. */
+export const open = (target) => markedCtl(target)?.open?.();
+/** Close a marked sheet (or popover / menu) — by element or id. */
+export const close = (target) => markedCtl(target)?.close?.();
 export { createShapeSpring, glassMorph };
 /** Register <glass-ui> (start() already does) — or the same element under another name. */
 export const defineElement = (name) => defineGlassElement(name);
@@ -199,6 +258,7 @@ export { GLASS_VERSION } from './index';
 
 function startAuto() {
   if (observer) return;
+  document.addEventListener('click', openerClick);
   scan(document.body);
   observer = new MutationObserver((records) => {
     let removed = false;
@@ -234,6 +294,17 @@ function startAuto() {
     attributes: true,
     attributeFilter: [ATTR, PROPS_ATTR, SWITCH_ATTR, SLIDER_ATTR, 'disabled', 'min', 'max', 'step', 'value', ...Object.values(W).map((w) => w.attr)],
   });
+}
+
+/** A click on a data-glassparency-open="<id>" button opens that sheet / popover / menu. */
+function openerClick(e) {
+  const btn = e.target.closest?.(`[${OPEN_ATTR}]`);
+  if (!btn) return;
+  const ctl = markedCtl(btn.getAttribute(OPEN_ATTR));
+  if (ctl) {
+    e.preventDefault();
+    ctl.open();
+  }
 }
 
 /** Attach every data-glassparency element (and glass control input) in (and including) `node`. */
@@ -426,6 +497,12 @@ function widget(el) {
     return;
   }
 
+  if (kind in NEW_KINDS) {
+    const made = NEW_KINDS[kind](el, props, fire);
+    if (made) widgets.set(el, { kind, raw: el.getAttribute(PROPS_ATTR) || '', ...made });
+    return;
+  }
+
   // Tab bar / sidebar: the children are the items unless some are marked.
   const marked = el.querySelector(':scope > [data-gp-item]');
   const items = marked ? [...el.querySelectorAll(':scope > [data-gp-item]')] : [...el.children];
@@ -461,6 +538,7 @@ function refreshWidget(el) {
   }
   if (w.kind === 'checkbox' || w.kind === 'radio') w.ctl.update({ checked: el.checked, disabled: el.disabled });
   else if (w.kind === 'progress') w.ctl.update({ value: progressValue(el), bead: el.hasAttribute('data-glassparency-bead') });
+  else if (w.refresh) w.refresh();
   else w.ctl.update({});
 }
 
@@ -475,4 +553,228 @@ function unwidget(el) {
     el.style.removeProperty('display');
   }
   widgets.delete(el);
+}
+
+// --- Segmented, stepper, range / block sliders, select, popover, menu, tooltip, sheet -------
+
+/** A number from an attribute / input value, or d. */
+const numOr = (v, d) => (v === '' || v == null || !Number.isFinite(Number(v)) ? d : Number(v));
+/** min / max / step of a range or number input. */
+const limitsOf = (input, dMax = 100) => ({
+  min: numOr(input?.getAttribute('min'), 0),
+  max: numOr(input?.getAttribute('max'), dMax),
+  step: input?.getAttribute('step') === 'any' ? 0.000001 : numOr(input?.getAttribute('step'), 1),
+});
+/** Name a made control like its source: aria-label, or its <label>'s text. */
+function nameLike(target, src) {
+  const name = src.getAttribute('aria-label') || [...(src.labels || [])].map((l) => l.textContent.trim()).join(' ');
+  if (name) target.setAttribute('aria-label', name);
+  const cls = src.getAttribute('data-glassparency-class');
+  if (cls) target.className = cls;
+}
+const placementOf = (el) => ({
+  placement: el.getAttribute('data-glassparency-placement') || undefined,
+  align: el.getAttribute('data-glassparency-align') || undefined,
+});
+
+/**
+ * kind → (el, props, fire) → { ctl, extra?, off, refresh? } (or null: not usable yet).
+ * `extra` is a made element that unwidget removes (and shows `el` again).
+ */
+const NEW_KINDS = {
+  // Children are the segments (or only those marked data-gp-item), like a tab bar.
+  segmented(el, props, fire) {
+    const marked = el.querySelector(':scope > [data-gp-item]');
+    const items = marked ? [...el.querySelectorAll(':scope > [data-gp-item]')] : [...el.children];
+    for (const it of items) it.setAttribute('data-gp-item', '');
+    const selected = items.findIndex((it) => it.getAttribute('aria-selected') === 'true' || it.hasAttribute('data-selected'));
+    const ctl = createSegmented(el, { value: Math.max(0, selected), props: { bar: props }, onChange: (index) => fire(el, 'glassparency:change', { index }) });
+    return { ctl, off: () => (marked ? null : items.forEach((it) => it.removeAttribute('data-gp-item'))) };
+  },
+
+  // <input type="number"> → a glass stepper after it (the input stays, hidden and in sync).
+  stepper(el, props, fire) {
+    const box = document.createElement('div');
+    nameLike(box, el);
+    el.after(box);
+    el.style.display = 'none';
+    const lim = limitsOf(el);
+    const ctl = createStepper(box, {
+      value: numOr(el.value, lim.min),
+      ...lim,
+      disabled: el.disabled,
+      wrap: el.hasAttribute('data-glassparency-wrap'),
+      props: { body: props },
+      onChange: (v) => {
+        el.value = String(v);
+        fire(el, 'input');
+        fire(el, 'change');
+      },
+    });
+    const follow = () => ctl.update({ value: numOr(el.value, lim.min), ...limitsOf(el), disabled: el.disabled });
+    el.addEventListener('change', follow);
+    return { ctl, extra: box, off: () => el.removeEventListener('change', follow), refresh: follow };
+  },
+
+  // A wrapper round one or two <input type="range"> (two = two knobs; data-glassparency-vertical = standing up).
+  range(el, props, fire) {
+    const ins = [...el.querySelectorAll('input[type="range"]')].slice(0, 2);
+    if (!ins.length) return null;
+    const slider = document.createElement('div');
+    nameLike(slider, el.hasAttribute('aria-label') ? el : ins[0]);
+    for (const i of ins) i.style.display = 'none';
+    el.appendChild(slider);
+    const lim = limitsOf(ins[0]);
+    const valueNow = () => (ins.length === 2 ? [numOr(ins[0].value, lim.min), numOr(ins[1].value, lim.max)] : numOr(ins[0].value, lim.min));
+    const ctl = createRangeSlider(slider, {
+      value: valueNow(),
+      ...lim,
+      orientation: el.hasAttribute('data-glassparency-vertical') ? 'vertical' : 'horizontal',
+      disabled: ins[0].disabled,
+      props: { track: props },
+      onChange: (v) => {
+        const vals = Array.isArray(v) ? v : [v];
+        ins.forEach((i, k) => {
+          i.value = String(vals[k]);
+          fire(i, 'input');
+        });
+      },
+      onChangeEnd: () => ins.forEach((i) => fire(i, 'change')),
+    });
+    const follow = () => ctl.update({ value: valueNow(), disabled: ins[0].disabled });
+    for (const i of ins) i.addEventListener('change', follow);
+    return {
+      ctl,
+      off: () => {
+        for (const i of ins) {
+          i.removeEventListener('change', follow);
+          i.style.removeProperty('display');
+        }
+        slider.remove();
+      },
+      refresh: follow,
+    };
+  },
+
+  // A block (its icon stays) round an optional <input type="range"> (kept hidden and in sync).
+  block(el, props, fire) {
+    const input = el.querySelector('input[type="range"]');
+    if (input) input.style.display = 'none';
+    const lim = limitsOf(input);
+    const ctl = createBlockSlider(el, {
+      value: numOr(input?.value, numOr(el.getAttribute('data-glassparency-value'), lim.min)),
+      ...lim,
+      orientation: el.hasAttribute('data-glassparency-horizontal') ? 'horizontal' : 'vertical',
+      disabled: Boolean(input?.disabled),
+      props: { body: props },
+      onChange: (v) => {
+        if (input) {
+          input.value = String(v);
+          fire(input, 'input');
+        }
+        fire(el, 'glassparency:change', { value: v });
+      },
+      onChangeEnd: () => input && fire(input, 'change'),
+    });
+    const follow = () => input && ctl.update({ value: numOr(input.value, lim.min), disabled: input.disabled });
+    input?.addEventListener('change', follow);
+    return {
+      ctl,
+      off: () => {
+        input?.removeEventListener('change', follow);
+        input?.style.removeProperty('display');
+      },
+      refresh: follow,
+    };
+  },
+
+  // <select> → a glass pop-up button + options panel (the <select> stays, hidden and in sync).
+  select(el, props, fire) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.setAttribute('data-gp-select-trigger', '');
+    nameLike(btn, el);
+    const label = document.createElement('span');
+    label.setAttribute('data-gp-select-label', '');
+    btn.append(label);
+    btn.insertAdjacentHTML('beforeend', '<svg data-gp-chevron viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>');
+    const panel = document.createElement('div');
+    for (const o of el.options) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.setAttribute('role', 'option');
+      b.setAttribute('data-value', o.value);
+      if (o.disabled) b.setAttribute('aria-disabled', 'true');
+      b.insertAdjacentHTML('beforeend', '<svg data-gp-check-mark viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 12.5l4.25 4.25L18.5 7.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>');
+      const t = document.createElement('span');
+      t.textContent = o.textContent;
+      b.append(t);
+      panel.append(b);
+    }
+    const showLabel = () => (label.textContent = el.selectedOptions[0]?.textContent || el.getAttribute('data-glassparency-placeholder') || 'Choose…');
+    showLabel();
+    el.after(btn);
+    btn.after(panel);
+    el.style.display = 'none';
+    const btnGlass = attachGlass(btn, el.getAttribute('data-glassparency-trigger') || 'button', props);
+    const ctl = createSelect(btn, panel, {
+      value: el.value,
+      props: parseProps(el.getAttribute(PANEL_PROPS_ATTR) || '', el),
+      ...placementOf(el),
+      onChange: (v) => {
+        el.value = v;
+        showLabel();
+        fire(el, 'input');
+        fire(el, 'change');
+      },
+    });
+    const follow = () => {
+      showLabel();
+      ctl.update({ value: el.value });
+    };
+    el.addEventListener('change', follow);
+    return {
+      ctl,
+      extra: btn,
+      off: () => {
+        el.removeEventListener('change', follow);
+        btnGlass.destroy();
+        panel.remove();
+      },
+      refresh: follow,
+    };
+  },
+
+  // A button + its panel (by id). The button's own glass is data-glassparency="button" as usual.
+  popover: (el, props, fire) => pairOf(el, 'popover', fire),
+  menu: (el, props, fire) => pairOf(el, 'menu', fire),
+
+  tooltip(el, props) {
+    const ctl = createTooltip(el, { text: el.getAttribute(W.tooltip.attr) || undefined, placement: el.getAttribute('data-glassparency-placement') || undefined, props });
+    return { ctl, off: () => {}, refresh: () => ctl.update({ text: el.getAttribute(W.tooltip.attr) || '' }) };
+  },
+
+  // A sheet panel: opened by data-glassparency-open="<id>" buttons or Glassparency.open(id).
+  sheet(el, props, fire) {
+    const detents = (el.getAttribute('data-glassparency-detents') || '')
+      .split(',')
+      .map(Number)
+      .filter((d) => d > 0 && d <= 1);
+    const ctl = createSheet(el, { detents: detents.length ? detents : undefined, props, onClose: () => fire(el, 'glassparency:close') });
+    return { ctl, off: () => {} };
+  },
+};
+
+/** A popover / menu: the button (el) and its panel (the element with the id it names). */
+function pairOf(el, kind, fire) {
+  const panel = document.getElementById(el.getAttribute(W[kind].attr) || '');
+  if (!panel) return null;
+  const create = kind === 'menu' ? createMenu : createPopover;
+  const ctl = create(el, panel, {
+    props: parseProps(el.getAttribute(PANEL_PROPS_ATTR) || '', el),
+    ...placementOf(el),
+    onOpenChange: (open) => fire(el, 'glassparency:toggle', { open }),
+    ...(kind === 'menu' ? { onSelect: (index, item) => fire(el, 'glassparency:select', { index, item }) } : {}),
+  });
+  return { ctl, off: () => {} };
 }
