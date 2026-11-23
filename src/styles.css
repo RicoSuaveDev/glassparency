@@ -72,7 +72,9 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .round.big svg { width: 24px; height: 24px; }
 
 /* --- Hero ------------------------------------------------------------------ */
-.hero { position: relative; padding: 150px 0 70px; overflow: hidden; }
+.hero { position: relative; padding: 150px 0 70px; overflow: hidden; background: var(--paper); }
+/* Solid page colour (covers the glass's base canvas, which paints the lab's photo). */
+.after { background: var(--paper); }
 .kicker { font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 0 0 22px; }
 .display {
   margin: 0; font-weight: 800; letter-spacing: -0.055em; line-height: 0.86;
@@ -96,107 +98,6 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 }
 .lens:active { cursor: grabbing; }
 
-/* --- Bento ------------------------------------------------------------------ */
-.bento { display: grid; grid-template-columns: repeat(12, 1fr); gap: 16px; padding-bottom: 16px; }
-.tile { position: relative; border-radius: 28px; overflow: hidden; background: var(--tile); min-height: 300px; }
-.span-7 { grid-column: span 7; }
-.span-5 { grid-column: span 5; }
-.label { position: absolute; left: 24px; top: 20px; font-size: 13px; color: var(--muted); z-index: 1; }
-.tile.on-color .label { color: rgba(255, 255, 255, 0.85); }
-
-/* Poster (the "album art" the player floats over) — flat shapes only. */
-.poster { background: var(--cobalt); min-height: 520px; }
-.poster .sun { position: absolute; width: 400px; height: 400px; border-radius: 50%; background: var(--orange); right: -70px; top: 150px; }
-.poster .half { position: absolute; width: 320px; height: 160px; border-radius: 160px 160px 0 0; background: var(--art-black); left: 120px; top: 300px; }
-.poster .bar { position: absolute; left: 0; right: 0; height: 26px; background: var(--art-white); }
-.poster .word { position: absolute; left: 34px; top: 54px; font-size: 96px; font-weight: 800; letter-spacing: -0.05em; color: var(--art-white); line-height: 0.9; }
-
-.player {
-  position: absolute; left: 24px; right: 24px; bottom: 24px;
-  display: grid; grid-template-columns: 64px 1fr auto; gap: 18px; align-items: center;
-  padding: 16px 18px; border-radius: 30px; color: #fff;
-  background: rgba(17, 17, 17, 0.35);
-}
-.art { width: 64px; height: 64px; border-radius: 14px; background: var(--orange); position: relative; overflow: hidden; }
-.art::after { content: ''; position: absolute; width: 40px; height: 40px; border-radius: 50%; background: var(--art-black); left: 12px; top: 30px; }
-.track b { display: block; font-size: 17px; letter-spacing: -0.01em; }
-.track span { font-size: 14px; opacity: 0.8; }
-.scrub { height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.3); margin-top: 10px; position: relative; }
-.scrub::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 38%; border-radius: 2px; background: #fff; }
-.times { display: flex; justify-content: space-between; font-size: 12px; opacity: 0.75; margin-top: 6px; }
-.controls { display: flex; gap: 10px; align-items: center; }
-.player .round { color: #fff; background: rgba(255, 255, 255, 0.18); }
-
-/* Settings tile */
-.settings { padding: 64px 24px 24px; display: flex; flex-direction: column; gap: 12px; background: var(--orange); }
-.settings .label { color: rgba(17, 17, 17, 0.7); }
-.settings .numeral { position: absolute; right: -20px; bottom: -70px; font-size: 330px; font-weight: 800; letter-spacing: -0.06em; color: var(--art-black); line-height: 1; }
-.row {
-  display: flex; align-items: center; justify-content: space-between; gap: 16px;
-  padding: 14px 14px 14px 20px; border-radius: 22px; background: rgba(255, 255, 255, 0.55); color: var(--art-black);
-}
-.row b { font-weight: 600; font-size: 15px; display: block; }
-.row small { font-size: 13px; color: rgba(17, 17, 17, 0.6); }
-.row .thick { width: 160px; flex: none; } /* the glass slider (GlassSlider) */
-
-/* Morph tile */
-.stripes { background: repeating-linear-gradient(90deg, var(--art-black) 0 28px, var(--art-white) 28px 56px) center / 56px 100%; }
-.drop { position: absolute; top: calc(50% - 60px); width: 120px; height: 120px; border-radius: 50%; background: rgba(255, 255, 255, 0.25); transition: left 1.2s cubic-bezier(.6, 0, .2, 1); }
-.tile-cta { position: absolute; left: 24px; bottom: 24px; }
-
-/* Type tile */
-.type { background: var(--lemon); display: grid; place-items: center; }
-.type .aa { font-size: 260px; font-weight: 800; letter-spacing: -0.06em; color: var(--art-black); line-height: 1; }
-.slab { position: absolute; left: 50%; top: 50%; width: 300px; height: 120px; transform: translate(-50%, -50%); border-radius: 999px; background: rgba(255, 255, 255, 0.2); }
-
-/* --- Controls tile (checkboxes, radios, text field, progress) ------------------ */
-.controls-tile { background: var(--cobalt); min-height: 460px; color: var(--art-white); }
-.controls-tile .label { color: rgba(255, 255, 255, 0.85); }
-.ct-art { position: absolute; inset: 0; }
-.ct-disc { position: absolute; width: 360px; height: 360px; border-radius: 50%; background: var(--orange); right: -90px; top: -60px; }
-.ct-word { position: absolute; right: 30px; bottom: 26px; font-size: 92px; font-weight: 800; letter-spacing: -0.05em; line-height: 0.88; text-align: right; color: var(--lemon); }
-.ct-body { position: relative; display: flex; flex-direction: column; gap: 16px; padding: 64px 24px 24px; max-width: 470px; }
-.ct-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; }
-.ct-field { width: 100%; height: 44px; font-size: 15px; }
-.ct-prog { width: 100%; height: 8px; }
-.pill.small { height: 32px; padding: 0 12px; font-size: 13px; }
-
-/* --- Tab bar tile ----------------------------------------------------------------- */
-.tabs-tile { background: var(--art-black); min-height: 460px; }
-.tabs-tile .label { color: rgba(255, 255, 255, 0.8); }
-.covers { position: absolute; inset: 52px 16px 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-.cover { aspect-ratio: 1; border-radius: 14px; position: relative; overflow: hidden; }
-.cover::after { content: ''; position: absolute; border-radius: 50%; background: rgba(17, 17, 17, 0.85); }
-.cover.c0::after { width: 60%; height: 60%; left: 20%; top: 35%; }
-.cover.c1::after { width: 100%; height: 30%; left: 0; top: 55%; border-radius: 0; background: var(--art-white); }
-.cover.c2::after { width: 40%; height: 40%; right: 10%; top: 10%; background: var(--orange); }
-.hint { position: absolute; left: 0; right: 0; bottom: 104px; margin: 0; text-align: center; font-size: 13px; color: rgba(255, 255, 255, 0.85); text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6); }
-.tabbar { position: absolute; left: 16px; right: 16px; bottom: 20px; height: 64px; color: #fff; --gp-item-color: #fff; --gp-accent: var(--orange); }
-.tab { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 0; font-size: 10px; font-weight: 600; }
-.tab svg { width: 22px; height: 22px; }
-
-/* --- Sidebar tile ------------------------------------------------------------------ */
-.side-tile { background: var(--orange); min-height: 420px; }
-.side-tile .label { color: rgba(17, 17, 17, 0.7); }
-.side-art { position: absolute; inset: 0; background:
-  radial-gradient(circle at 78% 30%, var(--cobalt) 0 120px, transparent 121px),
-  linear-gradient(transparent 62%, var(--art-black) 62% 70%, transparent 70%); }
-.sidebar { position: absolute; left: 24px; top: 56px; bottom: 24px; width: 230px; padding: 10px; color: var(--art-black); --gp-item-color: var(--art-black); --gp-accent: var(--cobalt); }
-.side-item { display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 12px; text-align: left; font-size: 15px; font-weight: 500; }
-.side-item svg { width: 18px; height: 18px; }
-
-/* --- Styles tile ------------------------------------------------------------------- */
-.styles-tile { background: var(--lemon); min-height: 420px; color: var(--art-black); }
-.styles-tile .label { color: rgba(17, 17, 17, 0.7); }
-.styles-art { position: absolute; inset: 0; background: repeating-linear-gradient(90deg, var(--art-black) 0 22px, transparent 22px 44px) right / 46% 100% no-repeat; }
-.sa-word { position: absolute; left: 24px; bottom: 6px; font-size: 110px; font-weight: 800; letter-spacing: -0.06em; line-height: 0.9; color: var(--cobalt); text-transform: capitalize; }
-.styles-body { position: relative; display: flex; flex-direction: column; gap: 16px; padding: 60px 24px 24px; max-width: 520px; }
-.style-pick { height: 46px; color: var(--art-black); --gp-item-color: var(--art-black); --gp-accent: var(--cobalt); }
-.style-opt { padding: 0; font-size: 14px; font-weight: 600; }
-.style-code { align-self: flex-start; font-size: 13px; padding: 2px 8px; border-radius: 6px; background: rgba(255, 255, 255, 0.6); }
-.style-slider { width: 100%; }
-.styles-tile .ct-field { color: var(--art-black); }
-
 /* --- Principles ------------------------------------------------------------ */
 .principles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 40px; padding: 90px 0 80px; border-bottom: 1px solid var(--rule); }
 .principles .n { font-size: 13px; color: var(--muted); }
@@ -209,35 +110,17 @@ footer { display: flex; justify-content: space-between; padding: 28px 0 40px; fo
    trail the page while scrolling), and what every browser shows for a moment
    before the real glass draws. On desktop the library's glass replaces it. */
 @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .nav, .install, .player, .row, .drop, .slab {
+  .nav, .install {
     -webkit-backdrop-filter: blur(16px) saturate(1.7);
     backdrop-filter: blur(16px) saturate(1.7);
-  }
-  .drop, .slab {
-    -webkit-backdrop-filter: blur(1.5px) saturate(1.4) brightness(1.08);
-    backdrop-filter: blur(1.5px) saturate(1.4) brightness(1.08);
   }
 }
 .nav, .install { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.55), 0 10px 30px rgba(17, 17, 17, 0.08); }
 [data-theme='dark'] .nav, [data-theme='dark'] .install { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1), 0 10px 30px rgba(0, 0, 0, 0.4); }
-.player { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), inset 0 0 0 1px rgba(255, 255, 255, 0.14), 0 14px 34px rgba(0, 0, 0, 0.28); }
-.row { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), inset 0 0 0 1px rgba(255, 255, 255, 0.35); }
-/* Lenses: a clear bubble with a bright rim, light inside the top edge and a soft shadow. */
-.drop, .slab {
-  background: rgba(255, 255, 255, 0.1);
-  box-shadow:
-    inset 0 0 0 1.5px rgba(255, 255, 255, 0.75),
-    inset 0 10px 18px -6px rgba(255, 255, 255, 0.55),
-    inset 0 -8px 16px -8px rgba(0, 0, 0, 0.25),
-    0 14px 30px rgba(0, 0, 0, 0.25);
-}
-
 /* --- Tablets --------------------------------------------------------------- */
 @media (max-width: 900px) {
-  .span-7, .span-5 { grid-column: 1 / -1; }
   .links { display: none; }
   .hero-foot, .principles { grid-template-columns: 1fr; }
-  .poster .word { font-size: 64px; }
 }
 
 /* --- Phones (same breakpoint as the library's mobile layout) ---------------- */
@@ -255,38 +138,6 @@ footer { display: flex; justify-content: space-between; padding: 28px 0 40px; fo
   .hero-foot { gap: 24px; margin-top: 28px; }
   .lede { font-size: 16px; }
   .install { width: 100%; justify-content: space-between; height: 52px; padding-left: 18px; font-size: 14px; }
-
-  .bento { gap: 12px; }
-  .tile { border-radius: 22px; min-height: 0; }
-
-  .poster { min-height: 470px; }
-  .poster .word { font-size: 58px; left: 22px; top: 32px; }
-  .poster .sun { width: 300px; height: 300px; right: -90px; top: 110px; }
-  .poster .half { width: 240px; height: 120px; border-radius: 120px 120px 0 0; left: 30px; top: 230px; }
-  .player {
-    left: 12px; right: 12px; bottom: 12px;
-    grid-template-columns: 52px minmax(0, 1fr); gap: 12px 14px; padding: 14px; border-radius: 24px;
-  }
-  .art { width: 52px; height: 52px; border-radius: 12px; }
-  .art::after { width: 32px; height: 32px; left: 10px; top: 24px; }
-  .controls { grid-column: 1 / -1; justify-content: center; gap: 16px; }
-  .player .round { width: 42px; height: 42px; }
-  .player .round.big { width: 54px; height: 54px; }
-
-  .settings { padding: 52px 14px 14px; gap: 10px; }
-  .settings .numeral { font-size: 220px; right: -12px; bottom: -44px; }
-  .row { padding: 12px 12px 12px 16px; gap: 12px; }
-  .row small { display: block; font-size: 12px; line-height: 1.35; }
-  .row .thick { width: 130px; }
-
-  .stripes { min-height: 300px !important; }
-  .ct-word, .sa-word { display: none; } /* (would sit under the controls on a phone) */
-  .ct-body, .styles-body { padding: 52px 14px 14px; }
-  .styles-art { background-size: 22% 100%; }
-  .sidebar { left: 14px; width: calc(100% - 28px); }
-  .type { min-height: 280px !important; }
-  .type .aa { font-size: 168px; }
-  .slab { width: 220px; height: 88px; }
 
   .principles { gap: 28px; padding: 56px 0 40px; }
   .principles h3 { font-size: 22px; }

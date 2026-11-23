@@ -1,0 +1,533 @@
+/* =============================================================================
+   src/lab/lab.css — The glass UI lab section, in the showcase's own style
+   (warm paper, ink, cobalt accent, oversized type, 28px tiles).
+   The control sizes are the lab's; the colours come from styles.css tokens.
+   ========================================================================== */
+.lab {
+  --lab-bg: var(--paper);
+  --lab-text: var(--ink);
+  --lab-muted: var(--muted);
+  --lab-chip: color-mix(in srgb, var(--paper) 86%, transparent);
+  --gap: 24px; /* stage ↔ window edge */
+}
+
+/* --- Intro (solid: covers the glass's base canvas) ---------------------------- */
+.lab-intro { background: var(--paper); }
+.lab-intro .wrap { padding: 30px 0 40px; border-top: 1px solid var(--rule); }
+.lab-title {
+  margin: 0; font-weight: 800; letter-spacing: -0.05em; line-height: 0.9;
+  font-size: clamp(48px, 8vw, 112px);
+}
+.lab-intro .lede { margin-top: 26px; max-width: 640px; }
+
+/* --- Stage: the see-through window onto the photo ------------------------------
+   No background of its own: the library's base canvas (z −1, fixed to the
+   window) paints the photo behind the page, so it stays still while the
+   controls scroll over it. The page around the stage is solid paper; the
+   strip between the stage and the window edges (and the rounded corners)
+   is covered by a paper ring drawn by ::before. */
+.labStage {
+  position: relative; /* (no z-index / overflow: the controls' HTML must stack with the glass canvases) */
+  margin: 0 var(--gap);
+  padding: 16px 24px 24px;
+  border-radius: 28px;
+  color: var(--lab-text);
+}
+.labStage::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: 0 0 0 var(--gap) var(--paper);
+  pointer-events: none;
+}
+/* The photo you see (Lab.jsx Backdrop): with anchor "page" the base canvas
+   only REFRACTS global.backgroundImage (in window coordinates) — this CSS
+   copy is what shows. A position: fixed layer (fixed on every device —
+   phones and iOS ignore background-attachment: fixed), clipped to the
+   rounded stage by clip-path on its holder (clip-path clips fixed
+   descendants too). Behind the base canvas (z −2). */
+.labBackdrop {
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  border-radius: inherit;
+  clip-path: inset(0 round 28px);
+  pointer-events: none;
+}
+.labBackdropImg {
+  position: fixed;
+  inset: 0;
+  background-color: #1c1c1e;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+
+/* --- Sticky settings bar (plain HTML, under the fixed nav) ------------------- */
+.labBar {
+  position: sticky;
+  top: 88px;
+  z-index: 70; /* above the controls' HTML (50) and the glass canvases, under the nav (80) */
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 22px;
+  margin-bottom: 20px;
+  padding: 14px 16px 14px 22px;
+  border-radius: 22px;
+  background: color-mix(in srgb, var(--paper) 88%, transparent);
+  box-shadow: inset 0 0 0 1px var(--rule), 0 10px 30px rgba(17, 17, 17, 0.12);
+}
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .labBar { -webkit-backdrop-filter: blur(16px) saturate(1.6); backdrop-filter: blur(16px) saturate(1.6); }
+}
+.labTitle { display: flex; flex-direction: column; margin-right: auto; min-width: 0; }
+.labTitle strong { font-size: 14px; font-weight: 700; letter-spacing: -0.01em; }
+.labTitle span { font-size: 12px; color: var(--muted); }
+.labChoice { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 13px; }
+.labChoice > span {
+  margin-right: 6px; color: var(--muted);
+  font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+}
+.labChoice button {
+  height: 30px; padding: 0 12px; border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+  font-size: 13px; font-weight: 600;
+}
+.labChoice button:hover { background: color-mix(in srgb, var(--ink) 14%, transparent); }
+.labChoice button[aria-checked='true'] { background: var(--ink); color: var(--paper); }
+.labUrl {
+  width: min(320px, 100%); height: 32px; padding: 0 14px;
+  border: 1px solid var(--rule); border-radius: 999px;
+  background: transparent; color: inherit; font: inherit; font-size: 13px;
+}
+.labInsToggle {
+  height: 36px; padding: 0 18px; border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+  font-size: 14px; font-weight: 600;
+}
+.labInsToggle[aria-pressed='true'] { background: var(--cobalt); color: #fff; }
+
+/* Labels stay readable over the backdrop: small paper chips. */
+.labCol h2,
+.labBlurb,
+.labRowHead {
+  display: inline-flex;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--lab-chip);
+  color: var(--ink);
+}
+
+/* --- Columns ------------------------------------------------------------- */
+.labCols {
+  position: relative;
+  z-index: 50; /* above the float canvas (49) so the HTML sits on its glass */
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 20px;
+}
+.labCol { min-width: 0; }
+.labCol h2 { margin: 0 0 6px; font-size: 22px; font-weight: 800; letter-spacing: -0.03em; }
+.labBlurb { display: inline-block; min-height: 0; margin: 0 0 16px; padding: 6px 12px; border-radius: 14px; font-size: 13px; line-height: 1.4; }
+.labRow { margin-bottom: 20px; }
+.labRowHead {
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.labRowHead em { font-style: normal; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--muted); }
+.labRowBody { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; }
+/* Plain text next to glass controls (checkbox / radio labels) on the backdrop. */
+.labRowBody { color: #fff; text-shadow: 0 1px 6px rgba(0, 0, 0, 0.55); }
+.labRowBody .labMini { text-shadow: none; }
+
+/* Buttons */
+.labBtn {
+  padding: 9px 20px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(120, 120, 128, 0.25);
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.labRound {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(120, 120, 128, 0.25);
+  color: inherit;
+  cursor: pointer;
+}
+.labTraffic {
+  display: flex;
+  gap: 9px;
+  padding: 0 4px;
+}
+.labDot {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: #ff5f57;
+  cursor: pointer;
+}
+
+/* Text field */
+.labField {
+  width: 100%;
+}
+
+/* Slider */
+.labSlider {
+  flex: 1;
+  min-width: 140px;
+}
+
+/* Tab bar (iOS proportions) */
+.labTabs {
+  width: 100%;
+  height: 62px;
+  --gp-item-color: var(--lab-text);
+}
+.labTab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+/* Sidebar (Apple Music proportions) */
+.labSide {
+  width: 220px;
+  padding: 10px;
+  --gp-item-color: var(--lab-text);
+}
+.labSideItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 36px;
+  padding: 0 10px;
+  text-align: left;
+  font-size: 14px;
+  font-weight: 500;
+}
+.labSideItem svg {
+  color: var(--gp-accent);
+}
+
+/* Progress */
+.labProg {
+  width: 100%;
+}
+.labProgBtns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 100%;
+}
+.labMini {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: rgba(120, 120, 128, 0.25);
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+/* Top bar row: a page header (topbar group, capsule) with two round header buttons. */
+.labTopbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 52px;
+  padding: 0 8px 0 20px;
+  box-sizing: border-box;
+  color: #fff;
+}
+.labTopbarTitle {
+  flex: 1;
+  font-weight: 700;
+  font-size: 16px;
+}
+.labHeadBtn {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+.labHeadBtn svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* --- Inspector (inspector.jsx): live settings panel ------------------------- */
+.labInsToggle {
+  margin-left: auto;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(120, 120, 128, 0.18);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.labInsToggle[aria-pressed='true'] {
+  background: var(--cobalt);
+  color: #fff;
+}
+/* Plain (not glass) panel pinned to the right edge, above everything. */
+.labInspector {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  width: min(360px, calc(100vw - 24px));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--lab-bg) 96%, transparent);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(120, 120, 128, 0.25);
+  font-size: 12px;
+  color: var(--lab-text);
+}
+.labInsHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px 6px;
+  font-size: 14px;
+}
+.labInsX {
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(120, 120, 128, 0.18);
+  color: inherit;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.labInsPick,
+.labInsActions {
+  display: flex;
+  gap: 6px;
+  padding: 4px 14px;
+}
+.labInspector select,
+.labInspector input[type='text'],
+.labInspector input[type='number'] {
+  min-width: 0;
+  padding: 5px 6px;
+  border: 1px solid rgba(120, 120, 128, 0.35);
+  border-radius: 7px;
+  background: rgba(120, 120, 128, 0.1);
+  color: inherit;
+  font: inherit;
+}
+.labInsPick select {
+  flex: 1;
+}
+.labInspector button:not(.labInsX):not(.labInsReset) {
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: rgba(120, 120, 128, 0.18);
+  color: inherit;
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.labInspector button.primary,
+.labInspector button.on {
+  background: var(--cobalt);
+  color: #fff;
+}
+.labInspector button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.labInsMeta {
+  margin: 4px 14px 6px;
+  color: var(--lab-muted);
+}
+.labInsBody {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 14px 14px;
+  border-top: 1px solid rgba(120, 120, 128, 0.2);
+}
+.labInsBody details {
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(120, 120, 128, 0.15);
+}
+.labInsBody summary {
+  padding: 4px 0;
+  font-weight: 700;
+  font-size: 12px;
+  cursor: pointer;
+}
+.labInsRow {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 5px 0 5px 8px;
+  border-left: 2px solid transparent;
+}
+.labInsRow.changed {
+  border-left-color: var(--cobalt);
+}
+.labInsLabel {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--lab-muted);
+}
+.labInsRow.changed .labInsLabel {
+  color: var(--lab-text);
+}
+.labInsLabel em {
+  font-style: normal;
+  font-size: 9px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: rgba(120, 120, 128, 0.2);
+}
+.labInsReset {
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--cobalt);
+  font: inherit;
+  cursor: pointer;
+}
+.labInsRange {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.labInsRange input[type='range'] {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--cobalt);
+}
+.labInsRange input[type='number'] {
+  width: 64px;
+}
+.labInsRange input[type='text'] {
+  flex: 1;
+}
+.labInsRange input[type='color'] {
+  width: 32px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.labInsVal,
+.labInsAxis {
+  min-width: 34px;
+  font-variant-numeric: tabular-nums;
+}
+.labInsCheck {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+/* "Pick on page": crosshair over the page while choosing a control. */
+html.labPicking,
+html.labPicking * {
+  cursor: crosshair !important;
+}
+
+/* --- New controls (segmented, stepper, sliders, overlays) ------------------ */
+.labSeg {
+  width: 100%;
+  height: 34px;
+  --gp-item-color: var(--lab-text);
+}
+.labVal {
+  min-width: 2ch;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.labBtnIcon {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.labPop {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 260px;
+  color: var(--lab-text);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.labSheet {
+  color: var(--lab-text);
+}
+.labSheet h3 {
+  margin: 8px 0 10px;
+  font-size: 18px;
+}
+.labSheet p {
+  margin: 0 0 12px;
+  opacity: 0.8;
+  line-height: 1.45;
+}
+
+/* The inspector opens under the fixed nav. */
+.labInspector { top: 88px; border-radius: 22px; font-family: inherit; }
+
+@media (max-width: 860px) {
+  .lab { --gap: 12px; }
+  .lab-intro .wrap { padding-bottom: 28px; }
+  .labBar { position: relative; top: 0; gap: 10px 14px; padding: 12px 14px; border-radius: 18px; }
+  .labTitle { flex-basis: 100%; }
+  .labStage { padding: 12px; border-radius: 22px; }
+  .labBackdrop { clip-path: inset(0 round 22px); }
+  .labCols { grid-template-columns: minmax(0, 1fr); }
+  .labInspector { top: 12px; }
+}
+
+/* Segmented control: the picked segment's label in ink on the light theme's
+   near-white lens (default / frosted). Auto text picks a light label for the
+   bar over a dark backdrop, which vanished on the white lens. */
+:root:not([data-theme='dark']) .labCol:is([data-style='default'], [data-style='frosted']) .labSeg { --gp-segment-on: #111111; }
+.labRowHead { flex-wrap: wrap; max-width: 100%; }
+.labRowHead > span { white-space: nowrap; }
