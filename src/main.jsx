@@ -3,13 +3,14 @@
  * Glassparency showcase page (https://ricosuavedev.github.io/glassparency/)
  * =============================================================================
  * Everything glass comes from the published npm package. The page is a nav,
- * the hero (with a lens you can drag), then the glass UI lab (src/lab/):
- * every control in the library's three styles, the Toys and the Tab bars
- * pages, with the lab's settings bar (page, renderer, quality, theme,
- * squish, backdrop) and its Inspector.
- * The lab's photo is global.backgroundImage (src/lab/Lab.jsx): the base
+ * the hero (with a lens you can drag), then "The controls" (src/home/): six
+ * small tiles, each one live control from the Playground with a link to its
+ * page — the Playground (#/playground) and the Config builder (#/builder)
+ * replaced the old glass UI lab. (src/lab/ still holds the backdrops, icons,
+ * squish presets and control CSS the docs pages share.)
+ * The tiles' photo is global.backgroundImage (src/home/Overview.jsx): the base
  * canvas behind the page paints it, fixed to the window. Everything except
- * the lab's stage has a solid background that covers that canvas.
+ * the tile windows has a solid background that covers that canvas.
  * The nav / hero glass sits over page CONTENT (not just the page colour), so
  * it is on the "float" layer and Safari / Firefox (WebGL + page pictures)
  * bend it too; its HTML has class "lift" (z-index above the float canvas).
@@ -18,8 +19,11 @@
 import { StrictMode, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { GLASS_VERSION, Glass, GlassProvider, requestGlassRender, reserveSnapshotArea, useGlass } from 'glassparency';
-import Lab, { RENDERER } from './lab/Lab';
 import { labConfig } from './lab/looks';
+// The control sizes and styles the docs pages and the home tiles share.
+import './lab/lab.css';
+// "The controls" — the home page's short tour of the common controls.
+import Overview from './home/Overview';
 // The playground / docs pages and the config builder (#/playground…, #/builder): src/docs/.
 import Docs from './docs/Docs';
 import { useRoute } from './docs/route';
@@ -36,6 +40,10 @@ const FORCED = typeof window !== 'undefined' ? new URLSearchParams(location.sear
 const TOUCH = typeof window !== 'undefined' && (window.matchMedia?.('(pointer: coarse)').matches || FORCED === 'page');
 
 const LAB = labConfig();
+// ?css=1 — the CSS glass that Safari / Firefox / phones show without WebGL,
+// in every browser (it was the old lab's Renderer "CSS fallback" switch;
+// kept as a URL option for checking the fallback).
+const RENDERER = typeof window !== 'undefined' && new URLSearchParams(location.search).get('css') === '1' ? 'css' : 'webgl';
 const PARAMS = typeof window !== 'undefined' ? new URLSearchParams(location.search) : new URLSearchParams();
 // ?blur=mip — the pre-1.5 frost (GPU box mipmaps), for side-by-side checks.
 const BLUR = PARAMS.get('blur') === 'mip' ? { blur: 'mip' } : {};
@@ -53,7 +61,7 @@ function makeConfig(quality) {
       anchor: 'page', // (all devices — see the note above makeConfig)
       ...(TOUCH && FORCED !== 'viewport' ? { mobileQuery: null } : {}),
       ...(FORCED === 'viewport' ? { mobileQuery: null, anchor: 'viewport' } : {}),
-      // The lab's Renderer "CSS fallback" (?css=1): the CSS glass that
+      // ?css=1 (RENDERER above): the CSS glass that
       // Safari / Firefox / phones show without WebGL, in every browser — the
       // whole window counts as the CSS-only "mobile" layout.
       ...(RENDERER === 'css' ? { mobileQuery: 'all', mobileLayers: [] } : {}),
@@ -162,7 +170,8 @@ function Lens({ heroRef }) {
 
 function App() {
   const [theme, setTheme] = useState('light');
-  const [quality, setQuality] = useState('auto');
+  // (The old lab's Quality picker set this; the page now always uses "auto".)
+  const [quality] = useState('auto');
   const [copied, setCopied] = useState(false);
   const heroRef = useRef(null);
   // A docs route (#/playground…, #/builder) shows the docs instead of the home page.
@@ -186,7 +195,7 @@ function App() {
         <a className="brand" href="#top">glassparency</a>
         <div className="links">
           <a href="https://www.npmjs.com/package/glassparency">Docs</a>
-          <a href="#lab">UI lab</a>
+          <a href="#controls">Controls</a>
           <a href="#/playground">Playground</a>
           <a href="#/builder">Config builder</a>
           <a href="#principles">How it works</a>
@@ -224,8 +233,8 @@ function App() {
       </header>
 
       <main>
-        {/* The glass UI lab: every control and setting (src/lab/) */}
-        <Lab theme={theme} setTheme={setTheme} quality={quality} setQuality={setQuality} />
+        {/* The controls: six live tiles + links to the Playground (src/home/) */}
+        <Overview G={G} strong={STRONG} />
 
         <div className="after">
         <div className="wrap">

@@ -887,7 +887,7 @@ export const CONTROLS = [
     id: 'morph',
     title: 'Morph (glassMorph)',
     section: 'Motion',
-    blurb: 'Apple’s liquid morph for any two elements: the button itself swells into the panel and melts back into it. The target is any element laid out where it ends up; the hook (or the hidden attribute) hides it while closed.',
+    blurb: 'Apple’s liquid morph for any two elements: the button’s own glass swells into the panel and melts back into it — one piece of glass, never a button and a panel side by side (replaceFrom). The target is any element laid out where it ends up, over the button; the hook (or the hidden attribute) hides it while closed.',
     groups: ['button', 'menu'],
     knobs: [
       { key: 'duration', type: 'range', label: 'Duration (ms)', min: 200, max: 2000, step: 10, value: 780 },
@@ -899,7 +899,9 @@ export const CONTROLS = [
       const [open, setOpen] = useState(false);
       const from = useRef(null);
       const to = useRef(null);
-      const opts = changed({ duration: v.duration, reverseDuration: v.reverseDuration, morphRadius: v.morphRadius, fadeContent: v.fadeContent }, MORPH_DEFAULTS);
+      // replaceFrom: the panel takes the button's place (the button's own
+      // glass grows into it) instead of budding off a button that stays.
+      const opts = { ...changed({ duration: v.duration, reverseDuration: v.reverseDuration, morphRadius: v.morphRadius, fadeContent: v.fadeContent }, MORPH_DEFAULTS), replaceFrom: true };
       useGlassMorph(from, to, open, opts);
       return (
         <div className="docMorph">
@@ -918,17 +920,17 @@ export const CONTROLS = [
     },
     code: {
       react(v) {
-        const opts = orNone(changed({ duration: v.duration, reverseDuration: v.reverseDuration, morphRadius: v.morphRadius, fadeContent: v.fadeContent }, MORPH_DEFAULTS));
+        const opts = { replaceFrom: true, ...changed({ duration: v.duration, reverseDuration: v.reverseDuration, morphRadius: v.morphRadius, fadeContent: v.fadeContent }, MORPH_DEFAULTS) };
         return reactExample({
           names: ['Glass', 'useGlassMorph'],
           hooks: [state('open', false), { hook: 'useRef', line: 'const button = useRef(null);' }, { hook: 'useRef', line: 'const panel = useRef(null);' }, { line: `useGlassMorph(button, panel, open${opts ? `, ${js(opts, 2)}` : ''});` }],
-          body: `<>\n  <button ref={button} onClick={() => setOpen((o) => !o)}>More</button>\n  <Glass ref={panel} group="menu" className="menu">…</Glass>\n</>`,
+          body: `<div style={{ position: 'relative' }}>\n  <Glass as="button" ref={button} group="button" onClick={() => setOpen((o) => !o)}>More</Glass>\n  {/* laid out OVER the button: it grows from where the button is */}\n  <Glass ref={panel} group="menu" className="menu" style={{ position: 'absolute', top: 0 }}>…</Glass>\n</div>`,
         });
       },
       script(v) {
-        const opts = orNone(changed({ duration: v.duration, reverseDuration: v.reverseDuration, morphRadius: v.morphRadius, fadeContent: v.fadeContent }, MORPH_DEFAULTS));
+        const opts = { replaceFrom: true, ...changed({ duration: v.duration, reverseDuration: v.reverseDuration, morphRadius: v.morphRadius, fadeContent: v.fadeContent }, MORPH_DEFAULTS) };
         return scriptPage(
-          '<button id="more" data-glassparency="button">More</button>\n<div id="menu" data-glassparency="menu" hidden>…</div>',
+          '<div style="position: relative">\n  <button id="more" data-glassparency="button">More</button>\n  <!-- laid out OVER the button: it grows from where the button is -->\n  <div id="menu" data-glassparency="menu" style="position: absolute; top: 0" hidden>…</div>\n</div>',
           `const morph = Glassparency.glassMorph(document.getElementById('more'), document.getElementById('menu')${opts ? `, ${js(opts)}` : ''});\n// await morph.finished;  ·  morph.reverse()  ·  glassMorph(from, to, { direction: 'out' })`
         );
       },

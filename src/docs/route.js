@@ -8,7 +8,7 @@
  *   #/playground/<id>       one control's page (src/docs/controls.jsx ids)
  *   #/builder               the online config builder (src/docs/Builder.jsx)
  *   #/builder?group=switch  …opened on one config group
- * Every other hash (#lab, #principles, #top…) is a plain anchor on the home
+ * Every other hash (#controls, #principles, #top…) is a plain anchor on the home
  * page, exactly as before — useRoute() returns null for those, and once the
  * home page is back on screen it scrolls to that anchor (the browser's own
  * jump ran before the home page was rendered, so it found nothing).
@@ -48,7 +48,7 @@ export function useRoute() {
       window.scrollTo(0, 0);
       return;
     }
-    // Back on the home page with an anchor (#lab…): jump to it once it exists.
+    // Back on the home page with an anchor (#controls…): jump to it once it exists.
     if (hash.length > 1) {
       const id = decodeURIComponent(hash.slice(1));
       requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView());

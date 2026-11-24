@@ -273,7 +273,7 @@ export default function Builder({ theme, setTheme, query }) {
       </header>
 
       <div className="docBuilder">
-        <section className="docPanel docBuilderPanel" data-glass-ignore="" aria-label="Settings">
+        <section className="docPanel docBuilderPanel" aria-label="Settings">
           <div className="docPanelHead">
             <strong>Edit</strong>
             <span className="docMuted">{total} change{total === 1 ? '' : 's'} in all</span>

@@ -11,8 +11,12 @@
  *                          knob change, each with a Copy button
  *
  * Stage, Knob and CodeTabs are exported: the config builder uses them too.
- * The panels are plain HTML (not glass): they shouldn't add load or be
- * refracted, and they carry data-glass-ignore so page pictures leave them out.
+ * The panels are plain HTML (not glass). They are NOT data-glass-ignore:
+ * glass that floats over them — bottom sheets, toasts, menus — refracts a
+ * picture of the page, and a panel left out of it simply wasn't there (the
+ * sheet showed only the backdrop photo). Their changes (knobs, code) just
+ * make the next picture a little later; only the stage's photo copy and its
+ * backdrop buttons stay left out.
  * =============================================================================
  */
 import { useEffect, useMemo, useState } from 'react';
@@ -64,7 +68,7 @@ export default function Playground({ id }) {
       {!control.noStage && <Stage><Demo key={demoKey} v={v} /></Stage>}
 
       <div className="docSplit">
-        <section className="docPanel" data-glass-ignore="" aria-label="Props">
+        <section className="docPanel" aria-label="Props">
           <div className="docPanelHead">
             <strong>Props</strong>
             <button type="button" className="docLink" onClick={reset}>
@@ -278,7 +282,7 @@ export function CodeTabs({ snippets, downloads, title = 'Code' }) {
   }
 
   return (
-    <section className="docCode" data-glass-ignore="" aria-label={title}>
+    <section className="docCode" aria-label={title}>
       <div className="docCodeHead">
         <div className="docTabs" role="tablist" aria-label={`${title} format`}>
           {tabs.map((t) => (

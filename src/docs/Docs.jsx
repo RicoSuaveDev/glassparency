@@ -22,7 +22,7 @@ export default function Docs({ route, theme, setTheme }) {
   return (
     <div className="docs">
       <div className="wrap docsGrid">
-        <nav className="docsSide" aria-label="Docs pages" data-glass-ignore="">
+        <nav className="docsSide" aria-label="Docs pages">
           <a className={`docsSideTop${current === 'builder' ? ' on' : ''}`} href={hrefFor('builder')} aria-current={current === 'builder' ? 'page' : undefined}>
             Config builder
           </a>
@@ -36,8 +36,8 @@ export default function Docs({ route, theme, setTheme }) {
               ))}
             </div>
           ))}
-          <a className="docsSideBack" href="#lab">
-            ← Back to the UI lab
+          <a className="docsSideBack" href="#controls">
+            ← Back to the home page
           </a>
         </nav>
 

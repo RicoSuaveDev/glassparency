@@ -139,6 +139,11 @@
 .docDemoRow { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 14px 20px; }
 .docWide { width: min(520px, 100%); align-items: stretch; }
 .docWide .docNote { align-self: center; }
+/* The lab's slider class (lab.css .labSlider) is "flex: 1" for the lab's ROWS.
+   In a demo COLUMN that means a 0 px flex basis on the vertical axis: the
+   slider collapsed to 0 px tall — no knob, no fill, just the track line.
+   Here it keeps its own height. */
+.docDemoCol > .labSlider { flex: none; }
 .docCard {
   display: flex;
   flex-direction: column;
@@ -153,9 +158,14 @@
 .docStageBody .labTabs { width: min(420px, 100%); }
 .docStageBody .labSeg { width: 100%; }
 
-/* Morph demo: the panel is laid out where it ends up (under the button). */
+/* Morph demo: the panel is laid out where it ends up — OVER the button, its
+   top edge on the button's (like a popover), so the button's own glass grows
+   down into it (glassMorph replaceFrom) instead of a second blob budding off. */
 .docMorph { position: relative; display: flex; flex-direction: column; align-items: center; gap: 12px; min-height: 190px; }
 .docMorphPanel {
+  position: absolute;
+  top: 0;
+  left: calc(50% - 130px);
   display: flex;
   flex-direction: column;
   gap: 8px;

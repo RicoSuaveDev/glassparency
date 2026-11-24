@@ -474,10 +474,12 @@ html.labPicking * {
 }
 
 /* --- New controls (segmented, stepper, sliders, overlays) ------------------ */
+/* (No --gp-item-color here: the labels follow the bar's own text colour,
+   which the library picks light or dark for what's behind the glass —
+   "textColor": "auto". A fixed ink colour vanished over dark photos.) */
 .labSeg {
   width: 100%;
   height: 34px;
-  --gp-item-color: var(--lab-text);
 }
 .labVal {
   min-width: 2ch;

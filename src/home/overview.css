@@ -1,0 +1,62 @@
+/* =============================================================================
+   src/home/overview.css — "The controls" section on the home page (Overview.jsx)
+   =============================================================================
+   Six tiles: a small photo window with one live control (the Playground's
+   .docStage / .docBackdrop, docs.css), then a name, a line and a link on the
+   page's own paper. The section itself is solid paper like the rest of the
+   page; only the tile windows show the photo.
+   ========================================================================== */
+/* NO background on the section: the tile photos (z-index −2, docs.css
+   .docBackdrop) sit BELOW the page content's stacking level, so a solid
+   section background would cover them. The body's paper shows instead. */
+.overview {
+  padding: 90px 0 30px;
+  border-top: 1px solid var(--rule);
+}
+.ovHead { max-width: 720px; margin-bottom: 40px; }
+.ovTitle {
+  margin: 0 0 16px;
+  font-size: clamp(36px, 5vw, 60px);
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+.ovLede { margin: 0; color: var(--muted); font-size: 18px; line-height: 1.5; }
+
+.ovGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 28px 24px;
+}
+.ovTile { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+
+/* The window: smaller than the Playground's stage, and no backdrop picker
+   bar above it (so no top padding for one). */
+.ovStage.docStage {
+  min-height: 0;
+  margin: 0;
+  padding: 24px 20px;
+  border-radius: 24px;
+}
+.ovStage .docBackdrop { clip-path: inset(0 round 24px); }
+.ovStageBody.docStageBody { min-height: 170px; }
+/* Demos built for the Playground's wide stage: keep them inside the tile. */
+.ovStageBody > * { max-width: 100%; }
+
+.ovText h3 { margin: 0 0 6px; font-size: 20px; letter-spacing: -0.02em; }
+.ovText p { margin: 0 0 10px; color: var(--muted); font-size: 15px; line-height: 1.45; }
+.ovLink { font-size: 14px; font-weight: 600; color: var(--cobalt); text-decoration: none; }
+.ovLink:hover { text-decoration: underline; }
+
+.ovCta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 44px; }
+.ovBtn { display: inline-grid; place-items: center; height: 46px; padding: 0 22px; font-size: 15px; text-decoration: none; color: inherit; }
+.ovBtn.dark { color: var(--paper); }
+
+@media (max-width: 1000px) {
+  .ovGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .overview { padding: 56px 0 20px; }
+  .ovGrid { grid-template-columns: 1fr; }
+  .ovStage .docBackdrop { clip-path: inset(0 round 22px); }
+  .ovStage.docStage { border-radius: 22px; padding: 20px 12px; }
+}
