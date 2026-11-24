@@ -16,6 +16,8 @@ export default defineConfig({
         // (the devtools entry first: an alias to a folder can't follow the package's "exports")
         alias: [
           { find: /^glassparency\/devtools$/, replacement: `${local}/dist/devtools.js` },
+          // (the config builder reads the built-in config: src/docs/Builder.jsx)
+          { find: /^glassparency\/glass\.config\.json$/, replacement: `${local}/dist/glass.config.json` },
           { find: /^glassparency$/, replacement: local },
         ],
         dedupe: ['react', 'react-dom', 'three', '@react-three/fiber', '@react-three/drei', 'maath', '@zumer/snapdom'] }

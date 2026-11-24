@@ -1,0 +1,408 @@
+/* =============================================================================
+   src/docs/docs.css — The playground / docs pages and the config builder,
+   in the showcase's own style (styles.css tokens: warm paper, ink, cobalt;
+   oversized type; 22–28px rounded tiles). Panels are plain HTML, not glass.
+   The control sizes reuse the lab's classes (lab.css: labBtn, labTabs…).
+   No focus rings are added or styled here: the glass controls draw none
+   (the library removes them) and this file never brings them back.
+   ========================================================================== */
+.docs {
+  /* (the lab's own colour variables, so its control classes work here too) */
+  --lab-bg: var(--paper);
+  --lab-text: var(--ink);
+  --lab-muted: var(--muted);
+  padding: 112px 0 80px;
+}
+.docsGrid {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 40px;
+  align-items: start;
+}
+
+/* --- Sidebar ---------------------------------------------------------------- */
+.docsSide {
+  position: sticky;
+  top: 100px;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: 20px;
+  font-size: 14px;
+}
+.docsSide a {
+  display: block;
+  padding: 5px 12px;
+  border-radius: 999px;
+  color: var(--muted);
+}
+.docsSide a:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.docsSide a.on { color: var(--paper); background: var(--ink); }
+.docsSideTop { font-weight: 700; color: var(--ink) !important; margin-bottom: 10px; box-shadow: inset 0 0 0 1px var(--rule); }
+.docsSideTop.on { color: var(--paper) !important; box-shadow: none; }
+.docsSideGroup { display: flex; flex-direction: column; gap: 2px; margin-bottom: 14px; }
+.docsSideHead {
+  padding: 0 12px 4px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.docsSideHead em { display: block; font-style: normal; text-transform: none; letter-spacing: 0; font-size: 11px; color: var(--orange); }
+.docsSideBack { margin-top: 6px; font-size: 13px; }
+
+/* --- A page ------------------------------------------------------------------ */
+.docsMain { min-width: 0; }
+.docHead { margin-bottom: 28px; }
+.docHead .kicker { margin-bottom: 14px; }
+.docTitle {
+  margin: 0 0 18px;
+  font-weight: 800;
+  letter-spacing: -0.05em;
+  line-height: 0.92;
+  font-size: clamp(40px, 6vw, 84px);
+}
+.docHead .lede { max-width: 720px; }
+.docGroups { margin: 16px 0 0; font-size: 13px; color: var(--muted); }
+.docGroups a { color: var(--cobalt); }
+.docMuted { color: var(--muted); font-style: normal; }
+.docNote {
+  display: inline-flex;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--paper) 86%, transparent);
+  color: var(--ink);
+  font-size: 12px;
+  text-shadow: none;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Stage: the see-through window onto the photo (like lab.css .labStage) ---
+   No background, z-index, overflow or transform of its own: the controls'
+   HTML must stack with the glass canvases. The photo is a window-fixed layer
+   clipped to the stage (clip-path on its holder), behind the base canvas. */
+.docStage {
+  position: relative;
+  min-height: 300px;
+  padding: 64px 24px 36px;
+  border-radius: 28px;
+  margin-bottom: 24px;
+}
+.docBackdrop {
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  border-radius: inherit;
+  clip-path: inset(0 round 28px);
+  pointer-events: none;
+}
+.docBackdropImg {
+  position: fixed;
+  inset: 0;
+  background-color: #1c1c1e;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+.docStageBar {
+  position: absolute;
+  top: 14px;
+  left: 16px;
+  z-index: 51;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.docStageBar button {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--paper) 80%, transparent);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+}
+.docStageBar button[aria-pressed='true'] { background: var(--ink); color: var(--paper); }
+.docStageBody {
+  position: relative;
+  z-index: 50; /* above the float canvas (49) so the HTML sits on its glass */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  color: #fff;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.55);
+}
+.docDemoCol { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.docDemoRow { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 14px 20px; }
+.docWide { width: min(520px, 100%); align-items: stretch; }
+.docWide .docNote { align-self: center; }
+.docCard {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: min(320px, 100%);
+  padding: 22px 24px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.2);
+  text-shadow: none;
+}
+.docCard span { opacity: 0.8; font-size: 14px; }
+.docStageBody .labTabs { width: min(420px, 100%); }
+.docStageBody .labSeg { width: 100%; }
+
+/* Morph demo: the panel is laid out where it ends up (under the button). */
+.docMorph { position: relative; display: flex; flex-direction: column; align-items: center; gap: 12px; min-height: 190px; }
+.docMorphPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 260px;
+  padding: 18px 20px;
+  border-radius: 22px;
+  color: var(--ink);
+  text-shadow: none;
+  font-size: 14px;
+}
+.docMorphPanel[hidden] { display: none; }
+.docMorphPanel .labMini { align-self: flex-start; }
+.docSpring { display: flex; flex-direction: column; align-items: center; gap: 16px; min-height: 220px; justify-content: center; }
+.docSpringBox { width: 120px; height: 120px; border-radius: 60px; cursor: pointer; background: rgba(255, 255, 255, 0.2); }
+
+/* --- Props panel + code ------------------------------------------------------ */
+.docSplit {
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+.docPanel {
+  padding: 16px 18px 18px;
+  border-radius: 22px;
+  background: color-mix(in srgb, var(--ink) 4%, var(--paper));
+  box-shadow: inset 0 0 0 1px var(--rule);
+  font-size: 13px;
+}
+.docPanelHead { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; font-size: 14px; }
+.docPanelActions { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px; }
+.docKnob { display: flex; flex-direction: column; gap: 4px; padding: 6px 0 6px 10px; border-left: 2px solid transparent; }
+.docKnob.changed { border-left-color: var(--cobalt); }
+.docKnobLabel { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; color: var(--muted); }
+.docKnob.changed .docKnobLabel { color: var(--ink); }
+.docKnobLabel em { font-size: 11px; }
+.docKnobCheck { flex-direction: row; align-items: center; gap: 8px; }
+.docKnobRange { display: flex; align-items: center; gap: 8px; }
+.docKnobRange input[type='range'] { flex: 1; min-width: 0; accent-color: var(--cobalt); }
+.docKnobRange input[type='number'] { width: 70px; }
+.docKnobRange input[type='text'] { flex: 1; min-width: 0; }
+.docKnobRange input[type='color'] { width: 34px; height: 26px; padding: 0; border: 0; background: none; }
+.docPanel select,
+.docPanel input[type='text'],
+.docPanel input[type='number'] {
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--paper);
+  color: inherit;
+  font: inherit;
+}
+.docPanel input.bad { border-color: var(--orange); }
+.docKnobCheck input[type='checkbox'] { accent-color: var(--cobalt); }
+.docLink { padding: 0; color: var(--cobalt); font-size: 12px; font-weight: 600; margin-left: auto; }
+.docBtn {
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.docBtn:disabled { opacity: 0.45; cursor: default; }
+.docVal, .docAxis { min-width: 34px; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; }
+.docKey { font-size: 10.5px; padding: 0 5px; border-radius: 5px; background: color-mix(in srgb, var(--ink) 7%, transparent); color: var(--muted); }
+.docMeta { margin: 4px 0 6px; color: var(--muted); font-size: 12px; }
+.docMeta code { color: var(--ink); }
+.docSegs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 6px 0 6px 10px; }
+.docSegs .docKnobLabel { margin-right: 6px; }
+.docSegs button {
+  height: 28px;
+  padding: 0 11px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+  font-size: 12px;
+  font-weight: 600;
+}
+.docSegs button[aria-pressed='true'] { background: var(--ink); color: var(--paper); }
+.docSides { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.docSides label { display: flex; flex-direction: column; gap: 2px; }
+.docSides input { width: 100%; }
+
+/* Code */
+.docCode {
+  min-width: 0;
+  border-radius: 22px;
+  background: #141416;
+  color: #f2f1ee;
+  overflow: hidden;
+}
+.docCodeHead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px 0; }
+.docTabs { display: flex; flex-wrap: wrap; gap: 4px; }
+.docTabs button,
+.docCodeActions button {
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  color: #b9b7b1;
+  font-size: 12px;
+  font-weight: 600;
+}
+.docTabs button:hover { color: #fff; }
+.docTabs button[aria-selected='true'] { background: rgba(255, 255, 255, 0.12); color: #fff; }
+.docCodeActions { display: flex; gap: 6px; }
+.docCodeActions button { background: rgba(255, 255, 255, 0.1); color: #fff; }
+.docCodeActions button.primary { background: var(--cobalt); }
+.docPre {
+  margin: 0;
+  padding: 14px 18px 20px;
+  max-height: 560px;
+  overflow: auto;
+  font-size: 12.5px;
+  line-height: 1.55;
+  white-space: pre;
+  tab-size: 2;
+}
+.docPreNone { margin: 0; padding: 18px; color: #b9b7b1; font-size: 13px; }
+
+/* --- Config builder ------------------------------------------------------------ */
+.docBuilder {
+  display: grid;
+  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+.docBuilderPanel {
+  position: sticky;
+  top: 100px;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+}
+.docBuilderMain { min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+.docBuilderMain .docStage { margin-bottom: 0; }
+.docSchema details { padding: 6px 0; border-top: 1px solid var(--rule); }
+.docSchema summary { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-weight: 700; cursor: pointer; }
+.docBadge { padding: 0 7px; border-radius: 999px; background: var(--cobalt); color: #fff; font-size: 11px; line-height: 18px; }
+.docFull { padding-left: 4px; font-size: 13px; }
+.docSamples { display: flex; flex-direction: column; align-items: center; gap: 28px; width: 100%; }
+.docSampleMain { display: flex; justify-content: center; min-height: 130px; align-items: center; }
+.docSampleBtn { padding: 12px 28px; font-size: 16px; }
+.docSampleBox {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: min(300px, 100%);
+  min-height: 120px;
+  padding: 22px 24px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.2);
+  text-shadow: none;
+}
+.docSampleBox span { opacity: 0.8; font-size: 14px; }
+.docSampleStrip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  align-items: center;
+  justify-items: center;
+  gap: 18px 22px;
+  width: 100%;
+}
+.docSampleStrip .labSlider,
+.docSampleStrip .labField,
+.docSampleStrip .labProg,
+.docSampleSeg { width: 100%; }
+
+/* --- 1.5.2 pages (controls152.jsx) -------------------------------------------------- */
+/* Looks: two cards + a row of controls. */
+.docLooks { display: flex; flex-direction: column; align-items: center; gap: 18px; width: 100%; }
+.docLooks > .docCard { width: min(420px, 100%); }
+.docLooksSeg { width: 220px; }
+/* The picked segment's label in ink on a near-white lens (light theme), as in lab.css. */
+:root:not([data-theme='dark']) .docLooksSeg { --gp-segment-on: #111111; }
+/* Squircle: two squares side by side (size / radius come from the knobs, inline). */
+.docSquircle { gap: 28px 48px; }
+.docSquare { background: rgba(255, 255, 255, 0.2); }
+.docLightCard { width: min(380px, 100%); min-height: 150px; }
+/* Scroll edge: a rounded scroller with an opaque background (what "auto" fades into)
+   and pinned glass bars, their text centre-left. */
+.docEdgeClip { width: min(460px, 100%); border-radius: 26px; overflow: hidden; }
+.docEdge {
+  position: relative;
+  width: 100%;
+  scrollbar-width: thin;
+  height: 380px;
+  overflow-y: auto;
+  border-radius: 26px;
+  background: var(--paper);
+  color: var(--ink);
+  text-shadow: none;
+}
+.docEdgeBar {
+  position: sticky;
+  z-index: 2; /* above the scroll edge layers (README: a bar inside the scroller needs ≥ 2) */
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  margin: 0 10px;
+  padding: 0 20px;
+  border-radius: 999px;
+  font-size: 15px;
+}
+.docEdgeTop { top: 8px; }
+.docEdgeBottom { bottom: 8px; }
+.docEdgeList { list-style: none; margin: 0; padding: 12px 18px; }
+.docEdgeList li { display: flex; align-items: center; gap: 14px; padding: 9px 0; border-bottom: 1px solid var(--rule); }
+.docEdgeList strong { display: block; font-size: 15px; }
+.docEdgeList em { font-style: normal; font-size: 13px; color: var(--muted); }
+.docEdgeSwatch { flex: none; width: 46px; height: 46px; border-radius: 10px; }
+/* Melting group: absolutely placed round pieces; the CSS transition is the "breathe" motion. */
+.docMelt { position: relative; width: min(520px, 100%); height: 240px; }
+.docBlob {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.25);
+  color: var(--ink);
+  text-shadow: none;
+  transition: left 0.9s cubic-bezier(0.5, 0, 0.2, 1);
+}
+.docBlobDrag { cursor: grab; touch-action: none; transition: none; }
+.docBlobDrag:active { cursor: grabbing; }
+/* Custom shapes + glass text */
+.docShape { display: grid; place-items: center; padding: 0; color: var(--ink); background: rgba(255, 255, 255, 0.2); }
+.docGlassText { font-weight: 900; letter-spacing: -0.03em; line-height: 1; color: #fff; }
+
+/* --- Tablets / phones ------------------------------------------------------------ */
+@media (max-width: 1000px) {
+  .docSplit, .docBuilder { grid-template-columns: minmax(0, 1fr); }
+  .docBuilderPanel { position: static; max-height: none; }
+}
+@media (max-width: 860px) {
+  .docs { padding-top: 84px; }
+  .docsGrid { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  /* The sidebar: one horizontally scrolling strip of pills. */
+  .docsSide { position: static; max-height: none; flex-direction: row; overflow-x: auto; overflow-y: hidden; gap: 6px; padding-bottom: 6px; }
+  .docsSideGroup { flex-direction: row; margin: 0; gap: 6px; align-items: center; }
+  .docsSideHead { padding: 0 2px 0 8px; white-space: nowrap; }
+  .docsSideHead em { display: none; }
+  .docsSide a { white-space: nowrap; box-shadow: inset 0 0 0 1px var(--rule); }
+  .docsSideTop { margin: 0; }
+  .docsSideBack { display: none !important; }
+  .docStage { padding: 56px 12px 24px; border-radius: 22px; }
+  .docBackdrop { clip-path: inset(0 round 22px); }
+}

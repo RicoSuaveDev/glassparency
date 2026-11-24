@@ -20,6 +20,9 @@ import { createRoot } from 'react-dom/client';
 import { GLASS_VERSION, Glass, GlassProvider, requestGlassRender, reserveSnapshotArea, useGlass } from 'glassparency';
 import Lab, { RENDERER } from './lab/Lab';
 import { labConfig } from './lab/looks';
+// The playground / docs pages and the config builder (#/playground…, #/builder): src/docs/.
+import Docs from './docs/Docs';
+import { useRoute } from './docs/route';
 
 // Every device: the glass canvases are anchored to the page. Browsers scroll on
 // their own thread (phones, and desktop trackpads / wheels too), so a
@@ -162,6 +165,8 @@ function App() {
   const [quality, setQuality] = useState('auto');
   const [copied, setCopied] = useState(false);
   const heroRef = useRef(null);
+  // A docs route (#/playground…, #/builder) shows the docs instead of the home page.
+  const route = useRoute();
   const config = useMemo(() => makeConfig(quality), [quality]);
   const dark = theme === 'dark';
 
@@ -182,6 +187,8 @@ function App() {
         <div className="links">
           <a href="https://www.npmjs.com/package/glassparency">Docs</a>
           <a href="#lab">UI lab</a>
+          <a href="#/playground">Playground</a>
+          <a href="#/builder">Config builder</a>
           <a href="#principles">How it works</a>
         </div>
         <span className="ver mono">v{GLASS_VERSION}</span>
@@ -191,6 +198,7 @@ function App() {
         </G>
       </Glass>
 
+      {route ? <Docs route={route} theme={theme} setTheme={setTheme} /> : <>
       <header className="hero" id="top" ref={heroRef}>
         <div className="wrap">
           <p className="kicker">Liquid glass for the web</p>
@@ -246,6 +254,7 @@ function App() {
         </div>
         </div>
       </main>
+      </>}
     </GlassProvider>
   );
 }
