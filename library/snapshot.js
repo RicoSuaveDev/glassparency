@@ -32,7 +32,7 @@
  * =============================================================================
  */
 import { getGlassTheme, getGlobal, glassRoot, subscribeConfig } from './config';
-import { allEntries, isFloatingGlass, placement, requestRender, stats } from './registry';
+import { allEntries, getEntry, isFloatingGlass, placement, requestRender, stats } from './registry';
 import { pausedWhileHidden, subscribeGlassPower } from './power';
 
 /**
@@ -205,6 +205,11 @@ function captureRect() {
  */
 function drawnFloatingGlass(el) {
   if (!isFloatingGlass(el)) return false;
+  // (1.5.3) Live glass (Chromium: the browser draws it on the element with
+  // an SVG backdrop filter — live.js) never looks at the picture; to glass
+  // ABOVE it (a toast, a sheet over the nav) it's ordinary page content. Left
+  // out, the nav was simply missing and the toast showed what's under it.
+  if (getEntry(Number(el.dataset.glassId))?.liveMode) return false;
   if (!mobileLayout()) return true;
   return getGlobal().mobileLayers.includes(placement(Number(el.dataset.glassId)).layer);
 }
@@ -389,7 +394,13 @@ async function take() {
   }
   const root = glassRoot();
   const rect = captureRect();
-  if (!root || !rect || rect.w < 1 || rect.h < 1) return;
+  // Nothing to picture (yet): this answers the requests so far too — a
+  // request left "pending" here (pendingSince set) made needPicture() think a
+  // picture was on its way, forever.
+  if (!root || !rect || rect.w < 1 || rect.h < 1) {
+    pendingSince = 0;
+    return;
+  }
   root.setAttribute('data-glass-root', ''); // (the ellipsis hold's selector — see holdEllipsis)
 
   pendingSince = 0; // this capture answers every request so far
@@ -593,6 +604,23 @@ function onScroll(ev) {
   // pinned to the window, or glass that scrolled in from outside the picture,
   // still gets one.
   if (boxScrolled || (moved > g.margin / 2 && !pictureCoversGlass())) scheduleSnapshot(250);
+}
+
+/**
+ * (1.5.3) A floating canvas just drew glass that refracts the page picture:
+ * make sure there is one that covers it. Pictures are otherwise only asked
+ * for by changes inside the glass root, scrolling and resizing — glass that
+ * APPEARS in the shared overlay (a bottom sheet, a toast, a tooltip: outside
+ * the root, data-glass-ignore) changes none of those. On a page whose other
+ * floating glass is all live (Chromium) no picture was ever taken, and the
+ * sheet / toasts refracted only the page background (or backdrop photo),
+ * never the HTML behind them. Cheap: nothing while a picture is already on
+ * its way or being taken, and only a box check when one exists.
+ */
+export function needPicture() {
+  if (!started || pendingSince || busy) return;
+  if (snapshot.canvas && pictureCoversGlass()) return;
+  scheduleSnapshot();
 }
 
 /** Does the current picture (slid by the scroll since it was taken) cover all floating WebGL glass now on screen? */

@@ -634,6 +634,21 @@ export function createLensBar(root, opts = {}) {
   const barGlass = attachGlass(root, groups.bar, barFixed);
   const lensGlass = attachGlass(lens, groups.lens, props.lens || {});
   const setLens = propSetter(lensGlass, props.lens || {});
+  // The picked label (the "accent" copy, drawn inside the lens) follows the
+  // LENS's own text colour — "textColor": "auto" picks it for the lens's own
+  // look (a near-white lens → dark text) — while the other labels follow the
+  // bar's (readBaseColor). The lens writes its colour to --glass-text on
+  // itself; the copies aren't inside it, so it's mirrored onto the bar as
+  // --gp-lens-text (glass.css). (Before, both used one colour read once.)
+  const mirrorLensText = () => {
+    const c = lens.style.getPropertyValue('--glass-text');
+    if (c) {
+      if (root.style.getPropertyValue('--gp-lens-text') !== c) root.style.setProperty('--gp-lens-text', c);
+    } else root.style.removeProperty('--gp-lens-text');
+  };
+  const lensTextObserver = typeof MutationObserver !== 'undefined' ? new MutationObserver(mirrorLensText) : null;
+  lensTextObserver?.observe(lens, { attributes: true, attributeFilter: ['style'] });
+  mirrorLensText();
   // The bar swells a little while pressed (no pull: it stays put).
   const barSquish = createSquish(root, () => ({ ...squishCfg(groups.bar, props.bar || {})(), squishPull: 0 }));
   let looks = null;
@@ -752,8 +767,14 @@ export function createLensBar(root, opts = {}) {
     }
   };
   // The items' normal text colour (they are made transparent once copied).
+  // It FOLLOWS the bar's own text colour live: with "textColor": "auto" (the
+  // default) the glass picks light or dark text for whatever is behind it and
+  // writes it to --glass-text later, and again whenever the backdrop changes —
+  // a colour read once here stayed the old one (dark labels melting into a
+  // dark photo). var(--glass-text) keeps up by itself; the colour read now is
+  // only the fallback for a bar whose glass never sets one.
   const readBaseColor = () => {
-    root.style.setProperty('--gp-item-base', getComputedStyle(root).color);
+    root.style.setProperty('--gp-item-base', `var(--glass-text, ${getComputedStyle(root).color})`);
   };
   const syncWipes = () => {
     contentCache = new WeakMap(); // (items / labels changed)
@@ -1071,6 +1092,8 @@ export function createLensBar(root, opts = {}) {
       }
       wipes.clear();
       root.style.removeProperty('--gp-item-base');
+      lensTextObserver?.disconnect();
+      root.style.removeProperty('--gp-lens-text');
       for (const it of items()) it.style.removeProperty('--gp-on');
       // Undo the tab semantics we added (roles and tabindexes the page set stay).
       for (const [it, ti] of tabIndexes) {

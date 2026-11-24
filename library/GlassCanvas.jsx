@@ -56,7 +56,7 @@ import {
   subscribeProps,
   subscribeStructure,
 } from './registry';
-import { snapshot, startSnapshots } from './snapshot';
+import { needPicture, snapshot, startSnapshots } from './snapshot';
 import { createTextSampler } from './autoText';
 import { bufferScaleFactor, dprCap, getQualityIndex, noteFrame, samplesCap, subscribeGlassQuality } from './quality';
 import { acquireGeometry, outline } from './shapes';
@@ -83,7 +83,7 @@ const CENTER_POINTER = Object.freeze({ x: 0.5, y: 0.5 });
 const MAX_LIQUID = 16; // shapes per morph group
 const MAX_SDF = 4; // custom-shape textures per liquid surface (uSdf0–uSdf3)
 const UNIT_PLANE = new THREE.PlaneGeometry(1, 1); // shared by every shadow layer
-import { backgroundFor, fullscreenVertexShader, isImageBackdrop, pageBackgroundShader, pageImageShader, setImageBackdrop } from './pageBackground';
+import { MAX_PICTURE_WINDOWS, backgroundFor, fullscreenVertexShader, isImageBackdrop, isImageOnScreen, pageBackgroundShader, pageColorRgb, pageImageShader, pictureWindows, setImageBackdrop, setImageOnScreen } from './pageBackground';
 
 /** This animation frame's timestamp (shared by all canvases drawn in it). */
 const frameTime = (fallback) => {
@@ -398,6 +398,7 @@ function GlassWorld({ layer, layers, pinned, onReady, single = null }) {
     // with the page between redraws (the site's own CSS background shows
     // through instead — the buffer still has the exact copy to refract).
     kit.syncTheme(!pageMode && !pinned);
+    kit.winKey = kit.syncPictureWindows(); // (1.5.3 — see the kit method)
     const baseBlocked = kit.backgroundIsImage();
     for (const c of controllers.current.values()) {
       if (c.animating) animating = true;
@@ -664,6 +665,11 @@ function GlassWorld({ layer, layers, pinned, onReady, single = null }) {
         }
       }
     }
+
+    // (1.5.3) This floating canvas drew glass of its own: it refracts the page
+    // picture, so make sure one is coming that covers it (snapshot.js
+    // needPicture — overlay glass appearing doesn't otherwise ask for one).
+    if (myIndex > 0 && !single && shown.length && getGlobal().snapshot.enabled) needPicture();
 
     // First frame drawn → the provider can hide the CSS glass backgrounds.
     if (!readySent.current && onReady) {
@@ -2273,6 +2279,11 @@ function makeKit(paintsImage) {
       // global.backgroundImage (background "auto" only): the picture + its size.
       uImage: { value: null },
       uImageSize: { value: new THREE.Vector2(1, 1) },
+      // (1.5.3) Where the picture is visible: -1 = everywhere; else only in
+      // uWins (window rects), uPageColor elsewhere — see syncPictureWindows.
+      uWinCount: { value: -1 },
+      uWins: { value: Array.from({ length: MAX_PICTURE_WINDOWS }, () => new THREE.Vector4()) },
+      uPageColor: { value: new THREE.Vector3(1, 1, 1) },
     },
     vertexShader: fullscreenVertexShader,
     fragmentShader: pageBackgroundShader(bg.spec),
@@ -2398,7 +2409,7 @@ function makeKit(paintsImage) {
     /** What the background pass draws (for the "everything below" fingerprint). */
     bgSig() {
       const u = bgMat.uniforms;
-      return `${bgShaderKey}|${u.uSize.value.x},${u.uSize.value.y}|${u.uCanvas.value.x},${u.uCanvas.value.y}|${u.uTop.value}|${bgImageTex ? bgImageTex.id : 0}`;
+      return `${bgShaderKey}|${u.uSize.value.x},${u.uSize.value.y}|${u.uCanvas.value.x},${u.uCanvas.value.y}|${u.uTop.value}|${bgImageTex ? bgImageTex.id : 0}|${u.uWinCount.value >= 0 ? this.winKey || '' : ''}`;
     },
     /** The dialog dimmer's colour (fingerprint). */
     underlayKey(layer) {
@@ -2431,12 +2442,40 @@ function makeKit(paintsImage) {
       // refracts exactly what is behind it.
       imageInBuffer = paintsImage && useImage;
       bgImageExact = imageInBuffer && paintOnScreen;
-      if (paintsImage) setImageBackdrop(imageInBuffer ? imageUrl : null);
+      if (paintsImage) {
+        setImageBackdrop(imageInBuffer ? imageUrl : null);
+        setImageOnScreen(bgImageExact); // (floating canvases: syncPictureWindows)
+      }
       const key = useImage ? `image|${imageUrl}` : bg.key;
       if (key === bgShaderKey) return;
       bgShaderKey = key;
       bgMat.fragmentShader = useImage ? pageImageShader : pageBackgroundShader(bg.spec);
       bgMat.needsUpdate = true; // recompile once (a few ms, only on a change)
+    },
+    /**
+     * (1.5.3) Floating canvases (not the base one): when the base canvas
+     * doesn't paint global.backgroundImage on screen (an in-page base
+     * canvas), the page shows it only where the SITE does — on <body>, or in
+     * picture "windows" (pageBackground.js pictureWindows). Draw it only
+     * there and the page's own colour elsewhere, so glass over plain page
+     * (a toast over the nav) refracts the page, not a photo that isn't
+     * there. Called every frame before the background pass; returns a key
+     * for the "everything below" fingerprint.
+     */
+    syncPictureWindows() {
+      const u = bgMat.uniforms;
+      let wins = null;
+      const url = getGlobal().backgroundImage;
+      if (!paintsImage && bgImageTex && url && !isImageOnScreen()) wins = pictureWindows(url);
+      if (!wins) {
+        u.uWinCount.value = -1;
+        return '';
+      }
+      u.uWinCount.value = wins.length;
+      wins.forEach((w, i) => u.uWins.value[i].set(w[0], w[1], w[2], w[3]));
+      const c = pageColorRgb();
+      u.uPageColor.value.set(c[0], c[1], c[2]);
+      return `${c.join(',')}|${wins.map((w) => w.map(Math.round).join(',')).join(';')}`;
     },
     /** Draw the background on screen too? (exact CSS copies, or the loaded picture) */
     paintBackground: () => screenPaint && (bg.paint || bgImageExact),
@@ -2537,7 +2576,10 @@ function makeKit(paintsImage) {
       bgMat.dispose();
       bgImageUrl = null; // a load still in flight disposes its own texture
       bgImageTex?.dispose();
-      if (paintsImage) setImageBackdrop(null); // base glass goes live again
+      if (paintsImage) {
+        setImageBackdrop(null); // base glass goes live again
+        setImageOnScreen(false);
+      }
       blitMat.dispose();
       snapTex?.dispose();
       snapMesh.geometry.dispose();

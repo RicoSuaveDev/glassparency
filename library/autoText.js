@@ -28,6 +28,8 @@
  * =============================================================================
  */
 
+import { getGlobal } from './config';
+
 /** Elements whose resolved textColor is "auto" (useGlass.js keeps it). */
 export const autoTextEls = new Set();
 /** Element → { color, contrast } last chosen (for hysteresis). */
@@ -171,16 +173,175 @@ export function dropAutoText(el) {
  * opaque one up from the element), else the theme.
  */
 export function estimateAutoText(el, p) {
+  estimated.set(el, p); // (re-estimated when the backdrop picture loads / the page scrolls)
   let bg = null;
-  for (let n = el.parentElement; n && !bg; n = n.parentElement) {
-    const m = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,\s/]+([\d.]+))?/.exec(getComputedStyle(n).backgroundColor);
-    if (m && (m[4] === undefined || Number(m[4]) > 0.5)) bg = [Number(m[1]), Number(m[2]), Number(m[3])];
+  for (let n = el.parentElement; n && !bg; n = n.parentElement) bg = opaqueColor(n);
+  // (1.5.3) The backdrop PICTURE (global.backgroundImage) showing behind the
+  // glass — on an ancestor, or on an element laid out behind it (a photo
+  // "window" like the showcase's stage: a sibling holding the picture) —
+  // with nothing opaque in between: the picture under the element is what
+  // the glass sits on, not the page's background colour. (Segmented labels
+  // stayed dark over a dark photo.)
+  if (pictureShowsBehind(el)) {
+    const pc = pictureColorBehind(el);
+    if (pc) bg = pc;
   }
   if (!bg) {
     const dark = document.documentElement.dataset.theme === 'dark' || window.matchMedia?.('(prefers-color-scheme: dark)').matches;
     bg = dark ? [0, 0, 0] : [255, 255, 255];
   }
   return applyAutoText(el, p, bg);
+}
+
+// --- The backdrop picture's colour under an element (estimates) ------------------
+/**
+ * global.backgroundImage fills the window like CSS `background-size: cover`
+ * centred, fixed to the window (the base canvas's copy, GlassCanvas
+ * fitToScreen — and a site's own on-screen copy of it is laid out the same
+ * way, as the showcase's stage does). Live glass / CSS glass can't read pixels,
+ * so the picture is loaded once more here, shrunk to SMALL px on its longer
+ * side, and the average colour of the part under the element is read from
+ * that copy (a few hundred pixels at most — cheap).
+ * A picture that can't be read (no CORS headers: a tainted canvas) gives
+ * null, and the page-colour estimate stays.
+ */
+const SMALL = 96;
+const pic = { url: null, data: null, w: 0, h: 0, failed: false };
+/** Elements estimated (not GPU-sampled) → their resolved props, for re-estimates. */
+const estimated = new WeakMap();
+function loadPicture(url) {
+  if (pic.url === url || typeof Image === 'undefined') return;
+  Object.assign(pic, { url, data: null, w: 0, h: 0, failed: false });
+  const im = new Image();
+  im.crossOrigin = 'anonymous';
+  im.onload = () => {
+    if (pic.url !== url) return;
+    try {
+      const k = SMALL / Math.max(im.naturalWidth, im.naturalHeight);
+      const w = Math.max(1, Math.round(im.naturalWidth * k));
+      const h = Math.max(1, Math.round(im.naturalHeight * k));
+      const c = document.createElement('canvas');
+      c.width = w;
+      c.height = h;
+      const ctx = c.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(im, 0, 0, w, h);
+      Object.assign(pic, { data: ctx.getImageData(0, 0, w, h).data, w, h });
+      reestimateAll();
+    } catch {
+      pic.failed = true; // (tainted: no CORS)
+    }
+  };
+  im.onerror = () => {
+    if (pic.url === url) pic.failed = true;
+  };
+  im.src = url;
+}
+/** An element's own background colour if it's (nearly) opaque, else null. */
+function opaqueColor(n) {
+  const m = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,\s/]+([\d.]+))?/.exec(getComputedStyle(n).backgroundColor);
+  return m && (m[4] === undefined || Number(m[4]) > 0.5) ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+/** Does this element paint the backdrop picture (its computed background-image)? */
+function paintsPicture(n, href) {
+  const bi = getComputedStyle(n).backgroundImage;
+  return bi !== 'none' && bi.includes(href);
+}
+/**
+ * Is the backdrop picture what's behind `el`? Walking up from it: an
+ * ancestor that paints the picture → yes; an ancestor with an opaque
+ * background first → no (the glass sits on that). At each level, a CHILD
+ * laid out under `el`'s centre (not the branch `el` is in) that paints the
+ * picture — itself or its first level of children — counts too: that's a
+ * photo window behind the glass (the picture is fixed to the window and
+ * clipped to it). Cheap: it only runs for estimated (live / CSS) glass.
+ */
+function pictureShowsBehind(el) {
+  if (typeof window === 'undefined') return false;
+  const url = getGlobal().backgroundImage;
+  if (!url) return false;
+  let href;
+  try {
+    href = new URL(url, location.href).href;
+  } catch {
+    return false;
+  }
+  const r = el.getBoundingClientRect();
+  const cx = r.left + r.width / 2;
+  const cy = r.top + r.height / 2;
+  const under = (c) => {
+    const cr = c.getBoundingClientRect();
+    return cr.width > 0 && cx >= cr.left && cx <= cr.right && cy >= cr.top && cy <= cr.bottom;
+  };
+  for (let n = el.parentElement; n; n = n.parentElement) {
+    if (paintsPicture(n, href)) return true;
+    for (const c of n.children) {
+      if (c.contains(el) || !under(c)) continue;
+      if (paintsPicture(c, href)) return true;
+      for (const g of c.children) if (paintsPicture(g, href)) return true;
+    }
+    if (opaqueColor(n)) return false;
+  }
+  return false;
+}
+/** Average [r, g, b] of the backdrop picture under `el`, or null. */
+function pictureColorBehind(el) {
+  if (typeof window === 'undefined') return null;
+  const url = getGlobal().backgroundImage;
+  if (!url) return null;
+  loadPicture(url);
+  if (!pic.data) return null;
+  const r = el.getBoundingClientRect();
+  if (!r.width || !r.height) return null;
+  // Window px → picture px ("cover", centred).
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const scale = Math.max(vw / pic.w, vh / pic.h);
+  const ox = (vw - pic.w * scale) / 2;
+  const oy = (vh - pic.h * scale) / 2;
+  const x0 = Math.max(0, Math.floor((r.left - ox) / scale));
+  const x1 = Math.min(pic.w - 1, Math.ceil((r.right - ox) / scale));
+  const y0 = Math.max(0, Math.floor((r.top - oy) / scale));
+  const y1 = Math.min(pic.h - 1, Math.ceil((r.bottom - oy) / scale));
+  if (x1 < x0 || y1 < y0) return null;
+  let R = 0;
+  let G = 0;
+  let B = 0;
+  let n = 0;
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      const i = (y * pic.w + x) * 4;
+      R += pic.data[i];
+      G += pic.data[i + 1];
+      B += pic.data[i + 2];
+      n++;
+    }
+  }
+  return n ? [R / n, G / n, B / n] : null;
+}
+/**
+ * Estimate again for every estimated element: once the picture has loaded,
+ * and after a scroll settles (the picture is fixed to the window, so what's
+ * under an element changes as the page scrolls).
+ */
+function reestimateAll() {
+  for (const el of autoTextEls) {
+    const p = estimated.get(el);
+    // Only elements whose colour is still an estimate (WebGL glass samples
+    // its real buffer — see createTextSampler).
+    if (p && el.isConnected && (el.dataset.glassDrawn === undefined || el.dataset.glassLive !== undefined)) estimateAutoText(el, p);
+  }
+}
+let picScrollTimer = 0;
+if (typeof window !== 'undefined') {
+  window.addEventListener(
+    'scroll',
+    () => {
+      if (!pic.data) return;
+      clearTimeout(picScrollTimer);
+      picScrollTimer = setTimeout(reestimateAll, 150);
+    },
+    { capture: true, passive: true }
+  );
 }
 
 // --- GPU sampling (used by GlassCanvas) -----------------------------------------

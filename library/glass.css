@@ -706,9 +706,11 @@ html[data-glass='on'] [data-glass-active][data-glass-icon-size] svg {
   font-weight: 600;
   white-space: nowrap;
 }
+/* The picked label: the site's --gp-segment-on, else the LENS's own auto
+   text colour (--gp-lens-text, mirrored by widgets.js), else the bar's. */
 :where([data-gp-segmented]) :where([data-gp-wipe='accent']) {
   color: inherit;
-  color: var(--gp-segment-on, var(--gp-item-base, currentColor));
+  color: var(--gp-segment-on, var(--gp-lens-text, var(--gp-item-base, currentColor)));
 }
 :where([data-gp-segmented]) > :where([data-gp-lens]) {
   background: rgba(255, 255, 255, calc(0.95 - 0.85 * var(--gp-lift, 0)));

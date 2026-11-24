@@ -420,11 +420,23 @@ function unhide(to) {
  *                    (default true). false: `from` is hidden while the film
  *                    plays and the film takes its place (it used to vanish
  *                    and come back as a flat CSS blob before its glass).
+ *   replaceFrom      (1.5.3) the panel REPLACES `from` instead of budding off
+ *                    it, like a popover: `from` steps aside as the film
+ *                    starts (the film starts as exactly `from`, so it's the
+ *                    button's own glass that grows), STAYS hidden while `to`
+ *                    is open, and comes back only once `to` has melted back
+ *                    into it. One piece of glass the whole time — never a
+ *                    button and a panel side by side. Lay `to` out over
+ *                    `from` (e.g. its top-left on the button's) so the panel
+ *                    grows from where the button was. Implies keepFrom: false.
  * @returns {{ finished: Promise<void>, reverse(): any, cancel(): void }}
  */
 export function glassMorph(from, to, options = {}) {
   if (!from || !to) throw new Error('glassMorph(from, to): both elements are needed');
   const opts = { duration: OPEN_MS, reverseDuration: CLOSE_MS, morphRadius: 34, layer: 'float', fadeContent: true, keepFrom: true, ...options };
+  // replaceFrom: `from` must not stay on screen (or join the film as itself):
+  // the film stands in for it — see the option's note above.
+  if (opts.replaceFrom) opts.keepFrom = false;
   return runMorph(from, to, opts, opts.direction !== 'out');
 }
 
@@ -470,10 +482,12 @@ function runMorph(from, to, opts, forwards, resumeAt) {
     },
   };
   // End state: forwards = `to` shown with its own glass; backwards = hidden.
-  // Either way `from` is back (it is only hidden while the film plays).
+  // Either way `from` is back (it is only hidden while the film plays) —
+  // except with replaceFrom, where `to` open means `from` stays hidden: the
+  // panel IS the button now. It comes back at the end of the way back.
   const finish = () => {
     done = true;
-    if (!opts.keepFrom) showFrom(from, true);
+    if (!opts.keepFrom && !(forwards && opts.replaceFrom)) showFrom(from, true);
     setSuspended(to, false);
     to.style.removeProperty('visibility');
     if (forwards) unhide(to);
@@ -495,6 +509,10 @@ function runMorph(from, to, opts, forwards, resumeAt) {
       { transformOrigin: '0 0', transform: 'none', opacity: 1 },
     ];
     const ms = reducedMotion() ? 1 : forwards ? 320 : 240;
+    // replaceFrom: here too the panel takes the button's place (no film to
+    // stand in for it) — the button fades out as the panel grows over it,
+    // and finish() brings it back after the way back.
+    if (opts.replaceFrom && forwards) hideFrom(from);
     const anim = to.animate?.(forwards ? frames : [...frames].reverse(), { duration: ms, easing: 'cubic-bezier(0.2, 0.9, 0.3, 1)' });
     if (anim) {
       cleanups.push(() => anim.cancel());

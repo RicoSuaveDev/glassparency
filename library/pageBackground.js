@@ -160,22 +160,133 @@ const toHex = (r, g, b) => `#${[r, g, b].map((n) => Math.round(Math.min(255, Mat
  * `background: center / cover`. The texture is uploaded with flipY (three.js
  * default), so its v runs bottom → top.
  */
+/** At most this many picture windows (pictureWindows, below). */
+export const MAX_PICTURE_WINDOWS = 8;
 export const pageImageShader = /* glsl */ `
   uniform vec2 uSize;        // window size in CSS px
   uniform vec2 uCanvas;      // this canvas's size in CSS px (= uSize when fixed to the window)
   uniform float uTop;        // this canvas's top edge in window px (in-page canvases; else 0)
   uniform vec2 uImageSize;   // picture size in px
   uniform sampler2D uImage;
+  // (1.5.3) Where the picture is VISIBLE (floating canvases, when the base
+  // canvas doesn't paint it on screen — see pictureWindows): -1 = everywhere;
+  // else only inside these window rects (left, top, right, bottom), and the
+  // page's own colour (uPageColor) everywhere else.
+  uniform int uWinCount;
+  uniform vec4 uWins[${MAX_PICTURE_WINDOWS}];
+  uniform vec3 uPageColor;
   varying vec2 vUv;
   void main() {
     // WINDOW px, y from the top like CSS (the picture is fixed to the window).
     vec2 px = vec2(vUv.x, 1.0 - vUv.y) * uCanvas + vec2(0.0, uTop);
+    if (uWinCount >= 0) {
+      bool shows = false;
+      for (int i = 0; i < ${MAX_PICTURE_WINDOWS}; i++) {
+        if (i >= uWinCount) break;
+        vec4 w = uWins[i];
+        if (px.x >= w.x && px.y >= w.y && px.x <= w.z && px.y <= w.w) shows = true;
+      }
+      if (!shows) {
+        gl_FragColor = vec4(uPageColor, 1.0);
+        return;
+      }
+    }
     float s = max(uSize.x / uImageSize.x, uSize.y / uImageSize.y); // cover
     vec2 drawn = uImageSize * s;
     vec2 iuv = (px - (uSize - drawn) * 0.5) / drawn;        // 0–1 across the picture, y from the top
     gl_FragColor = vec4(texture2D(uImage, vec2(iuv.x, 1.0 - iuv.y)).rgb, 1.0);
   }
 `;
+
+// --- Where the backdrop picture is actually visible (1.5.3) -------------------
+/**
+ * With global.anchor "page" the base canvas doesn't paint
+ * global.backgroundImage on screen (its in-page canvas scrolls between
+ * redraws): the SITE shows the picture with its own CSS — on <body>, or only
+ * in some "windows" (the showcase's photo stages: a window-fixed element
+ * with the picture, clipped to its stage). Everywhere else the page shows
+ * its own colour. Floating canvases (float / modal / top) refract the page
+ * picture laid over this background, and the page picture is see-through
+ * wherever the page paints nothing — so a toast over the nav found the photo
+ * there instead of the paper it really sits on.
+ * The base canvas tells (setImageOnScreen) whether it paints the picture on
+ * screen; when it doesn't, floating canvases draw the picture only inside
+ * these rects and the page colour elsewhere.
+ */
+let imageOnScreen = false;
+/** GlassCanvas (base layer): is it painting global.backgroundImage ON SCREEN? */
+export function setImageOnScreen(on) {
+  imageOnScreen = Boolean(on);
+}
+export const isImageOnScreen = () => imageOnScreen;
+
+let winCache = { url: null, at: 0, els: [] };
+const CANDIDATES_MS = 500; // re-find the elements at most this often
+/**
+ * The window rects (CSS px: left, top, right, bottom) where the page shows
+ * `url` itself: <html> / <body> painting it → the whole window; any other
+ * element whose INLINE style paints it (style="background-image: url(…)") →
+ * its box, cut to every ancestor that clips (clip-path, overflow). (Only
+ * inline styles are searched — a stylesheet picture on an element is missed;
+ * put it on <body> or inline.) Null = the page doesn't show it anywhere we
+ * can find… then the caller keeps the picture everywhere (as before).
+ * @param {string} url
+ * @returns {Array<[number, number, number, number]>|null}
+ */
+export function pictureWindows(url) {
+  if (typeof document === 'undefined' || !url) return null;
+  let href;
+  try {
+    href = new URL(url, location.href).href;
+  } catch {
+    return null;
+  }
+  const paints = (el) => {
+    const bi = getComputedStyle(el).backgroundImage;
+    return bi !== 'none' && bi.includes(href);
+  };
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  if ([document.documentElement, document.body].some((el) => el && paints(el))) return [[0, 0, vw, vh]];
+  const now = performance.now();
+  if (winCache.url !== url || now - winCache.at > CANDIDATES_MS) {
+    winCache = { url, at: now, els: [...document.querySelectorAll('[style*="background"]')].filter(paints) };
+  }
+  if (!winCache.els.length) return null;
+  const out = [];
+  for (const el of winCache.els) {
+    if (!el.isConnected) continue;
+    const r = el.getBoundingClientRect();
+    let [l, t, rr, b] = [r.left, r.top, r.right, r.bottom];
+    for (let n = el.parentElement; n && n !== document.body; n = n.parentElement) {
+      const cs = getComputedStyle(n);
+      if (cs.clipPath !== 'none' || cs.overflow !== 'visible') {
+        const c = n.getBoundingClientRect();
+        l = Math.max(l, c.left);
+        t = Math.max(t, c.top);
+        rr = Math.min(rr, c.right);
+        b = Math.min(b, c.bottom);
+      }
+    }
+    l = Math.max(l, 0);
+    t = Math.max(t, 0);
+    rr = Math.min(rr, vw);
+    b = Math.min(b, vh);
+    if (rr > l && b > t) out.push([l, t, rr, b]);
+    if (out.length >= MAX_PICTURE_WINDOWS) break;
+  }
+  return out;
+}
+/** The page's own colour (<body>, else <html>, else the theme's) as 0–1 rgb. */
+export function pageColorRgb() {
+  for (const el of [document.body, document.documentElement]) {
+    if (!el) continue;
+    const m = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,\s/]+([\d.]+))?/.exec(getComputedStyle(el).backgroundColor);
+    if (m && (m[4] === undefined || Number(m[4]) > 0.5)) return [Number(m[1]) / 255, Number(m[2]) / 255, Number(m[3]) / 255];
+  }
+  const dark = document.documentElement.dataset.theme === 'dark' || window.matchMedia?.('(prefers-color-scheme: dark)').matches;
+  return dark ? [0, 0, 0] : [1, 1, 1];
+}
 
 /** Fragment shader for a full-window quad (uv 0,0 = bottom-left) drawing `spec`. */
 export function pageBackgroundShader(spec) {

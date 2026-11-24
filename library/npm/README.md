@@ -753,6 +753,7 @@ toolbar's items coming out of its + button.)
 | `fadeContent` | `true` | Fade the target's content in at the end (and out first when closing) |
 | `direction` | `in` | `out` = the shown target melts back into `from` and is hidden |
 | `keepFrom` | `true` | `false` = `from` is hidden while the film plays and a stand-in takes its place (the 1.4 behaviour) |
+| `replaceFrom` | `false` | `true` = the target **replaces** `from`, like a popover: the button's own glass grows into the panel, the button stays hidden while it's open and comes back when the panel melts back into it. Lay the target out over `from`. |
 
 - The target can be any element, with or without glass. It is measured where it is laid out, so give it its final
   position (e.g. `position: fixed` / `absolute`) before morphing.

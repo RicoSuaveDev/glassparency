@@ -841,6 +841,14 @@ export interface GlassMorphOptions {
   fadeContent?: boolean;
   /** "in" (default): the target grows out of `from`; "out": it melts back and is hidden. */
   direction?: 'in' | 'out';
+  /** Keep `from` on screen the whole time (the target buds off it). Default true. */
+  keepFrom?: boolean;
+  /**
+   * The target REPLACES `from`, like a popover: `from` steps aside as the film starts (the film is
+   * `from`'s own glass, grown), stays hidden while the target is open, and comes back once the target
+   * has melted back into it. Lay the target out over `from`. Implies keepFrom: false. Default false.
+   */
+  replaceFrom?: boolean;
 }
 export interface GlassMorph {
   /** Resolves when the film has landed (or was cancelled / reversed). */

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.5.3 — 2026-11-24
+
+- New: glassMorph(from, to, { replaceFrom: true }) — the target REPLACES `from`, like a popover: the button's own glass grows into the panel, the button stays hidden while the panel is open, and it comes back once the panel has melted back into it. One piece of glass the whole time, never a button and a panel side by side. Works with useGlassMorph too (and in the CSS fallback). keepFrom is now in the TypeScript types as well.
+- Fixed: segmented control labels now follow the bar's auto text colour live ("textColor": "auto"): light labels over dark backdrops, dark over light. They used a colour read once, before auto text had picked one. The picked label follows the lens's own auto colour, so it stays readable on the white lens.
+- Fixed: auto text on live / CSS glass over a backdrop picture (global.backgroundImage) now reads the picture's colour under the element when the picture is what's behind it — before, it guessed from the page's background colour (dark labels over a dark photo).
+- Fixed: bottom sheets, toasts and other glass in the shared overlay now refract the page's HTML behind them. On a page whose other floating glass was all live (Chromium), no page picture was ever taken, so they showed only the page background or backdrop photo and kept their CSS look.
+- Fixed: glass above the page (toasts, sheets, tooltips) now refracts what's really behind it: live glass (Chromium) such as a nav bar is part of the page picture, and with global.anchor "page" the backdrop picture (global.backgroundImage) is only drawn where the page itself shows it (on <body>, or in elements whose inline style paints it), and the page's own colour everywhere else — a toast over the nav showed the backdrop photo.
+
 ## 1.5.2 — 2026-11-24
 
 - New: look presets — Clear, Frosted, Tinted and Dark smoke — in one line: applyGlassLook('frosted') (returns undo), <GlassProvider look>, a per-element look / lookColor prop, global.look in the config, a "looks" config block for your own, and data-glassparency-look in the script build. Looks only change glass surfaces; solid parts and accent colours keep theirs.

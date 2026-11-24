@@ -5,7 +5,7 @@
 [![Live demo](https://img.shields.io/badge/demo-live-0a84ff)](https://ricosuavedev.github.io/glassparency/)
 [![Source on GitHub](https://img.shields.io/badge/source-GitHub-0a84ff?logo=github)](https://github.com/RicoSuaveDev/glassparency/tree/main/library)
 
-![A glass lens bending the headline “Glass that bends the page.”](https://cdn.jsdelivr.net/npm/glassparency@1.5.2/media/hero-light.webp)
+![A glass lens bending the headline “Glass that bends the page.”](https://cdn.jsdelivr.net/npm/glassparency@1.5.3/media/hero-light.webp)
 
 **[See it live →](https://ricosuavedev.github.io/glassparency/)** Drag the lens, flip the settings, melt the drops.
 
@@ -39,13 +39,13 @@ Under the hood:
 
 ## What it looks like
 
-![Glass controls over flat colour artwork: a media player, settings rows, liquid drops and a thick glass bar over large type](https://cdn.jsdelivr.net/npm/glassparency@1.5.2/media/grid-light.webp)
+![Glass controls over flat colour artwork: a media player, settings rows, liquid drops and a thick glass bar over large type](https://cdn.jsdelivr.net/npm/glassparency@1.5.3/media/grid-light.webp)
 
-| ![A glass media player floating over poster artwork](https://cdn.jsdelivr.net/npm/glassparency@1.5.2/media/player.webp) | ![Two glass drops melting into one over black and white stripes](https://cdn.jsdelivr.net/npm/glassparency@1.5.2/media/morph.webp) |
+| ![A glass media player floating over poster artwork](https://cdn.jsdelivr.net/npm/glassparency@1.5.3/media/player.webp) | ![Two glass drops melting into one over black and white stripes](https://cdn.jsdelivr.net/npm/glassparency@1.5.3/media/morph.webp) |
 |---|---|
 | Floating controls bend the artwork behind them | Liquid morph: shapes melt together and split apart |
 
-![The same page in dark mode](https://cdn.jsdelivr.net/npm/glassparency@1.5.2/media/grid-dark.webp)
+![The same page in dark mode](https://cdn.jsdelivr.net/npm/glassparency@1.5.3/media/grid-dark.webp)
 
 ### The controls in motion
 
@@ -753,6 +753,7 @@ toolbar's items coming out of its + button.)
 | `fadeContent` | `true` | Fade the target's content in at the end (and out first when closing) |
 | `direction` | `in` | `out` = the shown target melts back into `from` and is hidden |
 | `keepFrom` | `true` | `false` = `from` is hidden while the film plays and a stand-in takes its place (the 1.4 behaviour) |
+| `replaceFrom` | `false` | `true` = the target **replaces** `from`, like a popover: the button's own glass grows into the panel, the button stays hidden while it's open and comes back when the panel melts back into it. Lay the target out over `from`. |
 
 - The target can be any element, with or without glass. It is measured where it is laid out, so give it its final
   position (e.g. `position: fixed` / `absolute`) before morphing.
