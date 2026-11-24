@@ -22,6 +22,9 @@ if (GLASS_VERSION !== 'dev' && typeof globalThis !== 'undefined') {
   }
 }
 export { default as Glass } from './Glass';
+// Glass that melts together (Apple's GlassEffectContainer) + glass text (1.5.2).
+export { GlassGroup, GlassText } from './GlassGroup';
+export { createGlassGroup } from './blendGroup';
 export { useGlass, attachGlass, setGlassProps, getGlassProps, mergeGlassProps } from './useGlass';
 // Shape springs + the liquid morph for any element (plain JS + React hooks).
 export { createShapeSpring, glassMorph } from './motion';
@@ -52,6 +55,11 @@ export { createCheckbox, createRadio, createTextField, createLensBar, createTabB
 // Squish & stretch for any element you animate yourself.
 export { createSquish, stretchFor } from './squish';
 export { reserveSnapshotArea } from './snapshot';
+// Scroll edge effect (iOS 26): content fades + blurs under pinned bars.
+export { GlassScrollEdge } from './GlassScrollEdge';
+export { createScrollEdge } from './scrollEdge';
+// Tilt highlight ("lightFollow": "tilt" / "auto"): iOS asks for permission — call from a tap.
+export { enableTiltHighlight } from './lightFollow';
 // Ask every glass canvas to draw a new frame (e.g. an element moved by JS,
 // outside global.root, where the automatic DOM watchers don't look).
 export { requestRender as requestGlassRender } from './registry';
@@ -63,10 +71,16 @@ export {
   getGlobal as getGlassGlobal,
   getGlassTheme,
   resolveGlass,
+  // Looks: ready-made themes (clear, frosted, tinted, smoke) in one line.
+  applyGlassLook,
+  getGlassLook,
+  LOOK_NAMES as GLASS_LOOKS,
 } from './config';
 export { getStatus as getGlassStatus, subscribeStatus as subscribeGlassStatus } from './registry';
 // Automatic quality: which level is in use (global.quality "auto" | "high" | "medium" | "low").
 export { getGlassQuality, subscribeGlassQuality, QUALITY_LEVELS as GLASS_QUALITY_LEVELS } from './quality';
+// Saving power (global.powerSaving): hidden-tab pause, low-battery calm motion.
+export { getGlassPower, subscribeGlassPower } from './power';
 export { LIVE_SUPPORTED as GLASS_LIVE_SUPPORTED } from './live';
 // global.backdrop "canvas" (the live page in one canvas — Chromium 157+).
 export { CANVAS_BACKDROP_SUPPORTED as GLASS_CANVAS_BACKDROP_SUPPORTED } from './pageCanvas';

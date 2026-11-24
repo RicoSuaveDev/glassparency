@@ -24,7 +24,10 @@
  * can force a layer (the header says "float") in glass.config.json.
  * =============================================================================
  */
-import { LAYERS, resolveGlass, subscribeConfig } from './config';
+import { LAYERS, getGlobal, resolveGlass, subscribeConfig } from './config';
+import { groupOf } from './blendGroup';
+import { isExactBackground, isImageBackdrop } from './pageBackground';
+import { pausedWhileHidden, subscribeGlassPower } from './power';
 
 let nextId = 1;
 const entries = new Map(); // id → entry
@@ -65,6 +68,9 @@ export function update(id, patch) {
   if (patch.props) {
     const was = e.props || {};
     moved = was.layer !== patch.props.layer || was.tier !== patch.props.tier;
+    // (1.5.2) A custom shape added or removed can move the element to another
+    // layer too — see liquidNeedsFloat in computePlacements.
+    if (!moved && JSON.stringify(was.shape ?? null) !== JSON.stringify(patch.props.shape ?? null)) moved = true;
     e.props = patch.props;
   }
   if (moved) {
@@ -102,6 +108,14 @@ export const getStructureVersion = () => structureVersion;
 export function subscribeStructure(fn) {
   structureListeners.add(fn);
   return () => structureListeners.delete(fn);
+}
+/**
+ * Something outside the registry changed which layer elements belong on —
+ * a glass group (blendGroup.js) was made or removed around them. Every
+ * canvas picks its elements again.
+ */
+export function glassLayersChanged() {
+  structureChanged();
 }
 function structureChanged() {
   structureVersion += 1;
@@ -149,16 +163,40 @@ function computePlacements() {
     const parentEl = e.el.parentElement?.closest('[data-glass-id]');
     const parent = parentEl ? entries.get(Number(parentEl.dataset.glassId)) : null;
     const up = parent ? place(parent) : null;
-    const layer = cfg.layer !== 'auto' ? cfg.layer : up ? up.layer : 'base';
+    let layer = cfg.layer !== 'auto' ? cfg.layer : up ? up.layer : 'base';
+    // (1.5.2) Glass that melts — a <GlassGroup> member, or a custom shape
+    // (path / svg / text) — is drawn ONLY by the WebGL liquid shader. On the
+    // base layer that shader can't see an image or gradient page background
+    // unless the config gives an exact copy of it (global.background object,
+    // or a picture the base canvas paints): the element would stay on its
+    // CSS stand-in forever and never melt. So "auto" puts it on the float
+    // layer, which refracts a picture of the real page. A layer set by the
+    // group or element ("base" on purpose) is left alone.
+    // The element's own HTML (a button's label) must then stack ABOVE the
+    // float canvas, or the glass covers it: live.js lifts it ("lifted").
+    const lifted = cfg.layer === 'auto' && layer === 'base' && liquidNeedsFloat(cfg, e.el);
+    if (lifted) layer = 'float';
     // A forced layer that differs from the parent's starts again at tier 0.
     const tier = cfg.tier !== 'auto' ? cfg.tier : up && up.layer === layer ? up.tier + 1 : 0;
-    const p = { layer, tier: Math.min(tier, 5) };
+    const p = { layer, tier: Math.min(tier, 5), lifted };
     map.set(e.id, p);
     resolving.delete(e.id);
     return p;
   };
   entries.forEach(place);
   return map;
+}
+
+/**
+ * (1.5.2) Must this base-layer element move to the float layer to be drawn?
+ * Only melting glass (group members, custom shapes — never morph glass,
+ * whose layer stays the site's choice as before), and only when the base
+ * canvas has no exact copy of the page background.
+ */
+function liquidNeedsFloat(cfg, el) {
+  if (cfg.morph || !(cfg.customShape || groupOf(el))) return false;
+  const g = getGlobal();
+  return !(isExactBackground(g.background) || isImageBackdrop(g.backgroundImage));
 }
 
 export const layerIndex = (layer) => Math.max(0, LAYERS.indexOf(layer));
@@ -288,8 +326,20 @@ export function addRenderer(invalidate) {
   return () => renderers.delete(invalidate);
 }
 export function requestRender() {
+  // Hidden tab (global.powerSaving, power.js): draw nothing now, but keep
+  // the request — one redraw catches up as soon as the tab is shown.
+  if (pausedWhileHidden()) {
+    renderWanted = true;
+    return;
+  }
   renderers.forEach((fn) => fn());
 }
+let renderWanted = false; // a redraw was asked for while the tab was hidden
+subscribeGlassPower(() => {
+  if (!renderWanted || pausedWhileHidden()) return;
+  renderWanted = false;
+  requestRender();
+});
 
 /**
  * Can a style / size change of this element NOT move any WebGL glass?

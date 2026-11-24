@@ -35,3 +35,10 @@ export declare const glassStats: {
   canvasSyncMs: number;
   canvasPaintMs: number;
 };
+/**
+ * Test the WebGL context-loss recovery: loses every glass canvas's WebGL
+ * context (WEBGL_lose_context), then restores it after `restoreAfter` ms
+ * (default 1000; null = never — the provider then tries a fresh context
+ * itself). Resolves with how many canvases were lost.
+ */
+export declare function loseGlassContext(opts?: { restoreAfter?: number | null }): Promise<number>;

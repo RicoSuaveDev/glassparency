@@ -69,7 +69,11 @@ const BLEND_KEYS = [
   'shadowOpacity', 'shadowBlur', 'shadowX', 'shadowY', 'borderOpacity', 'saturation', 'brightness', 'minify',
 ];
 
-export const reducedMotion = () => typeof window !== 'undefined' && Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
+// Should animations jump to their end? The OS "Reduce motion" setting, or
+// (global.powerSaving) a low, unplugged battery — power.js decides; it is
+// re-exported here for widgets.js / pickers.js / overlays.js.
+import { reducedMotion } from './power';
+export { reducedMotion };
 const clamp01 = (n) => Math.min(1, Math.max(0, n));
 const lerp = (a, b, t) => a + (b - a) * t;
 
@@ -110,6 +114,9 @@ export function blendLooks(a, b, t, el) {
   // These are finished values (any crystal / frosted style is already in
   // them): don't let the element's group apply its style rules a 2nd time.
   out.style = 'default';
+  // (the same for a look — clear / frosted / tinted / smoke, config.js
+  // "Looks": it is already in these values; a 2nd pass would double it)
+  out.look = 'none';
   return out;
 }
 

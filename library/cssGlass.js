@@ -59,6 +59,8 @@
  * =============================================================================
  */
 import { getGlassTheme, getGlobal } from './config';
+import { squircleExtent, squirclePath } from './rim';
+import { followLightAngle, followsLight, setLightVar, subscribeLightFollow } from './lightFollow';
 
 /** Elements that can't hold children: they keep their own CSS. */
 const VOID = new Set(['INPUT', 'IMG', 'TEXTAREA', 'SELECT', 'BR', 'HR', 'VIDEO', 'CANVAS', 'IFRAME', 'svg', 'SVG']);
@@ -146,6 +148,9 @@ function bevelArcs(width, height) {
     return `conic-gradient(${parts.join(',')})`;
   };
   const res = { glint: build(glint), rim: build((deg) => 1 - glint(deg)) };
+  // lightFollow: the same arcs, turned by --gp-css-arc-rot (see relightCss).
+  res.glintTurn = res.glint.replace('from 0deg', 'from var(--gp-css-arc-rot, 0deg)');
+  res.rimTurn = res.rim.replace('from 0deg', 'from var(--gp-css-arc-rot, 0deg)');
   if (arcCache.size >= 64) arcCache.delete(arcCache.keys().next().value);
   arcCache.set(key, res);
   return res;
@@ -172,7 +177,25 @@ function sizeChanged(el) {
   const qh = Math.round(h / 4) * 4;
   const short = Math.min(w, h);
   const cs = getComputedStyle(el);
-  const r = Math.min(parseFloat(cs.borderTopLeftRadius) || 0, short / 2);
+  let r = Math.min(parseFloat(cs.borderTopLeftRadius) || 0, short / 2);
+  // "corners": "squircle": the layers take the squircle's extent R as their
+  // radius, with corner-shape: squircle where the browser has it — else a
+  // clip-path of the exact outline (glass.css, [data-gp-css-corners]).
+  // The edge rings follow the squircle too: bandVars draws them as SVG masks
+  // of the same outline (the CSS rings are built from quarter circles).
+  const squircle = s.corners && r > 0.5; // (rim.js cornerN's rule: a real corner)
+  if (squircle) {
+    const bw = s.box.offsetWidth || w;
+    const bh = s.box.offsetHeight || h;
+    r = squircleExtent(r, bw, bh);
+    s.box.setAttribute('data-gp-css-corners', 'squircle');
+    s.sq = { w: bw, h: bh, R: r };
+    setVars(el, s, { '--gp-css-sq-r': `${r.toFixed(2)}px`, '--gp-css-clip': `path('${squirclePath(bw, bh, r)}')` });
+  } else if (s.box.hasAttribute('data-gp-css-corners')) {
+    s.sq = null;
+    s.box.removeAttribute('data-gp-css-corners');
+    setVars(el, s, { '--gp-css-sq-r': null, '--gp-css-clip': null, '--gp-css-ring-sq': null, '--gp-css-fold-sq': null });
+  }
   s.r = r;
   // Size factor for the edge widths / shadow (1 = a 60px pill), capped so
   // a big card doesn't get a huge offset shadow or a wide blurry rim.
@@ -186,7 +209,7 @@ function sizeChanged(el) {
   if (s.size !== key) {
     s.size = key;
     const arcs = bevelArcs(qw, qh);
-    setVars(el, s, { '--gp-css-arc-glint': arcs.glint, '--gp-css-arc-rim': arcs.rim });
+    setVars(el, s, { '--gp-css-arc-glint': s.follow ? arcs.glintTurn : arcs.glint, '--gp-css-arc-rim': s.follow ? arcs.rimTurn : arcs.rim });
   }
 }
 
@@ -210,6 +233,31 @@ function bandVars(el, s) {
     '--gp-css-d': `${d.toFixed(2)}px`,
     '--gp-css-fold-d': `${Math.max(0, fold).toFixed(2)}px`,
   });
+  // Squircle corners: the same rings, drawn along the squircle outline.
+  if (s.sq) {
+    setVars(el, s, {
+      '--gp-css-ring-sq': squircleRing(s.sq, w, d),
+      '--gp-css-fold-sq': squircleRing(s.sq, 0, Math.max(0.5, fold)),
+    });
+  }
+}
+
+/**
+ * A ring mask along a squircle outline ("corners": "squircle"), solid for
+ * `solid` px in from the edge and fading out by `fade` px — the squircle
+ * version of the edge layers' nine-part ring masks (glass.css), as an SVG
+ * image: the outline stroked twice as wide as the ring (its outer half is
+ * cut off by the layer's own squircle corners) and blurred across the fade.
+ */
+function squircleRing({ w, h, R }, solid, fade) {
+  const mid = (solid + fade) / 2; // the band's middle
+  const soft = Math.max(0, (fade - solid) / 3);
+  const path = squirclePath(w, h, R);
+  const svg =
+    `<svg xmlns='http://www.w3.org/2000/svg' width='${w}' height='${h}' viewBox='0 0 ${w} ${h}'>` +
+    (soft > 0.05 ? `<filter id='b' x='-10%' y='-10%' width='120%' height='120%'><feGaussianBlur stdDeviation='${soft.toFixed(2)}'/></filter>` : '') +
+    `<path d='${path}' fill='none' stroke='#000' stroke-width='${(2 * mid).toFixed(2)}'${soft > 0.05 ? " filter='url(#b)'" : ''}/></svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
 }
 
 /** Write CSS variables, only the ones that changed (each write restyles). */
@@ -336,8 +384,37 @@ export function applyCssGlass(el, cfg) {
     '--gp-css-caustic-o': (look.caustic * (1 - 0.6 * dark) * clamp(k, 0, 1)).toFixed(3),
   });
   s.band = { w: look.w, d: look.d, foldK: look.fold, bevel: Math.max(1, cfg.bevel ?? 12), foldCap: look.foldCap };
+  // Squircle corners / lightFollow changed: redo the size-dependent parts.
+  const corners = cfg.corners === 'squircle' && cfg.shape === 'roundedRectangle';
+  const follow = followsLight(cfg.lightFollow, cfg.lightFollowAmount);
+  if (corners !== Boolean(s.corners) || follow !== Boolean(s.follow)) {
+    s.corners = corners;
+    s.follow = follow;
+    s.size = '';
+  }
+  // lightFollow: turn the lit-edge arcs as the pointer / tilt moves.
+  if (follow) {
+    cssFollow.set(el, cfg);
+    offFollow ||= subscribeLightFollow(relightCss);
+    relightOneCss(el, cfg);
+  } else if (cssFollow.delete(el)) setLightVar(el, '--gp-css-arc-rot', null);
   if (!s.size) sizeChanged(el);
   else bandVars(el, s);
+}
+
+// --- lightFollow (lightFollow.js): CSS glass whose lit edge follows the pointer / tilt ------
+// The lit / unlit edge arcs are drawn for a light at the top-right; with
+// lightFollow they turn by how far the followed light is from lightAngle
+// (--gp-css-arc-rot, in a constructed stylesheet — see setLightVar), so at
+// rest they sit exactly where they always did.
+const cssFollow = new Map(); // element → its resolved config (only glass with lightFollow on)
+let offFollow = null;
+function relightOneCss(el, cfg) {
+  const deg = followLightAngle(cfg.lightAngle, cfg.lightFollow, cfg.lightFollowAmount, el.getBoundingClientRect());
+  setLightVar(el, '--gp-css-arc-rot', `${(deg - cfg.lightAngle).toFixed(2)}deg`);
+}
+function relightCss() {
+  for (const [el, cfg] of cssFollow) if (el.isConnected) relightOneCss(el, cfg);
 }
 
 /** Remove the CSS glass from an element (its own CSS is back). */
@@ -346,6 +423,7 @@ export function removeCssGlass(el) {
   if (!s) return;
   state.delete(el);
   ro?.unobserve(el);
+  if (cssFollow.delete(el)) setLightVar(el, '--gp-css-arc-rot', null); // (lightFollow)
   s.box.remove();
   el.removeAttribute('data-gp-css-on');
   el.removeAttribute('data-gp-css-static');

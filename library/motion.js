@@ -64,7 +64,8 @@ import { resolveGlass } from './config';
 import { reserveSnapshotArea, snapshot, subscribeSnapshot } from './snapshot';
 import { attachGlass, getGlassProps, mergeGlassProps, restoreGlassProps } from './useGlass';
 
-const reducedMotion = () => typeof window !== 'undefined' && Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
+// (The OS "Reduce motion" setting, or a low unplugged battery — power.js.)
+import { reducedMotion } from './power';
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 const clamp01 = (x) => clamp(x, 0, 1);
 const lerp = (a, b, t) => a + (b - a) * t;

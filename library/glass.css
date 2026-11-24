@@ -64,6 +64,16 @@ html[data-glass='on'] [data-glass-active][data-glass-live]::before {
   pointer-events: none;
 }
 
+/* "corners": "squircle" (live.js sets data-glass-corners only where the
+   browser has corner-shape): the layer's border-radius is then the
+   squircle's extent, and corner-shape turns its quarter circles into the
+   same superellipse the WebGL slab uses (rim.js) — border and shadows too. */
+@supports (corner-shape: squircle) {
+  html[data-glass='on'] [data-glass-active][data-glass-live][data-glass-corners='squircle']::before {
+    corner-shape: squircle;
+  }
+}
+
 /* padding: the element (glass + content) moves in from where it was. */
 html[data-glass='on'] [data-glass-active][data-glass-padded] {
   margin: var(--glass-margin) !important;
@@ -377,6 +387,43 @@ html[data-glass='on'] [data-glass-active][data-glass-icon-size] svg {
 }
 :root [data-gp-css-on][data-glass-border='off']:not([data-glass-drawn], [data-glass-live]) {
   border-color: transparent !important;
+}
+/* "corners": "squircle" (cssGlass.js sizeChanged): the layers' radius is the
+   squircle's extent R (--gp-css-sq-r; the layers inherit it from the box).
+   With corner-shape the corners become the superellipse itself; without it
+   (Safari / Firefox today) everything but the shadow + caustic is clipped
+   to the exact outline (--gp-css-clip: path(…)), so the shadow isn't cut. */
+[data-gp-css][data-gp-css-corners='squircle'] {
+  border-radius: var(--gp-css-sq-r, 0px) !important;
+}
+@supports (corner-shape: squircle) {
+  [data-gp-css][data-gp-css-corners='squircle'],
+  [data-gp-css][data-gp-css-corners='squircle'] > *,
+  [data-gp-css][data-gp-css-corners='squircle'] > * > span {
+    corner-shape: squircle;
+  }
+}
+@supports not (corner-shape: squircle) {
+  [data-gp-css][data-gp-css-corners='squircle'] > :not([data-gp-css-layer='shadow'], [data-gp-css-layer='caustic']) {
+    clip-path: var(--gp-css-clip, none);
+  }
+}
+/* …and the edge rings follow the squircle: one SVG ring mask along its
+   outline (cssGlass.js squircleRing) instead of the nine-part quarter-circle
+   ring below — still cut by the layer's arc. */
+[data-gp-css][data-gp-css-corners='squircle'] > :is([data-gp-css-layer='glint'], [data-gp-css-layer='rim'], [data-gp-css-layer='spec']) {
+  mask-image: var(--gp-arc), var(--gp-css-ring-sq, linear-gradient(#000 0 0));
+  mask-size: auto, 100% 100%;
+  mask-position: 0 0, 0 0;
+  mask-repeat: no-repeat;
+  mask-composite: intersect;
+}
+[data-gp-css][data-gp-css-corners='squircle'] > [data-gp-css-layer='fold'] {
+  mask-image: var(--gp-css-fold-sq, linear-gradient(#000 0 0));
+  mask-size: 100% 100%;
+  mask-position: 0 0;
+  mask-repeat: no-repeat;
+  mask-composite: add;
 }
 /* Drawn by WebGL / live glass: the CSS layers step aside. */
 [data-glass-drawn] > [data-gp-css],
@@ -1059,6 +1106,8 @@ html[data-glass-canvas] body {
    outline, not one of ours — whether focused by mouse, touch or keyboard.
    :where() = no specificity: a site that wants a ring adds its own. */
 :where([data-glass-active], [data-gp-switch], [data-gp-slider], [data-gp-check], [data-gp-radio], [data-gp-field], [data-gp-lensbar] [data-gp-item]):is(:focus, :focus-visible),
+/* (the one-knob range / vertical slider is focusable itself; the stepper's − / + halves) */
+:where([data-gp-range], [data-gp-stepper] > [data-gp-step]):is(:focus, :focus-visible),
 :where([data-gp-check], [data-gp-radio]):is(:focus, :focus-visible) > [data-gp-box] {
   outline: none;
 }
@@ -1075,4 +1124,173 @@ html[data-glass-canvas] body {
 :where(a[href]):has(> [data-glass-active]) {
   -webkit-user-drag: none;
   user-drag: none;
+}
+
+/* =============================================================================
+ * Scroll edge effect (scrollEdge.js — <GlassScrollEdge>, createScrollEdge,
+ * data-glassparency-scroll-edge). Not tied to html[data-glass]: it works with
+ * the glass on, off or unavailable. The host is the scroller's first child,
+ * sticky at the top of the scrollport; it takes no room (negative margins)
+ * and spans the padding box. Its two layers sit at the visible top and
+ * bottom edges; each is a progressive blur (backdrop-filter slices with
+ * growing blur, each masked to a shorter band) over a colour fade.
+ * ========================================================================== */
+[data-gp-scroll-edge] {
+  display: block;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  flex: none;
+  align-self: stretch;
+  height: var(--gp-se-h, 0px);
+  margin: calc(-1 * var(--gp-se-pt, 0px)) calc(-1 * var(--gp-se-pr, 0px)) calc(-1 * var(--gp-se-h, 0px)) calc(-1 * var(--gp-se-pl, 0px));
+  padding: 0;
+  border: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+/* The page itself scrolls: the host covers the viewport instead. */
+[data-gp-scroll-edge='page'] {
+  position: fixed;
+  inset: 0;
+  height: auto;
+  margin: 0;
+  z-index: 2;
+}
+[data-gp-se-layer] {
+  --gp-se-inset: var(--gp-se-inset-top, 0px);
+  --gp-se-dir: to bottom;
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: calc(var(--gp-se-inset) + var(--gp-se-size, 32px));
+}
+[data-gp-se-layer][hidden] {
+  display: none;
+}
+[data-gp-se-layer='bottom'] {
+  --gp-se-inset: var(--gp-se-inset-bottom, 0px);
+  --gp-se-dir: to top;
+  /* a scrollport height below the host's top */
+  top: calc(var(--gp-se-vh, 100%) - var(--gp-se-inset) - var(--gp-se-size, 32px));
+}
+[data-gp-scroll-edge='page'] > [data-gp-se-layer='bottom'] {
+  top: auto;
+  bottom: 0;
+}
+[data-gp-se-layer] > i {
+  position: absolute;
+  inset: 0;
+  display: block;
+  -webkit-mask-image: var(--gp-se-mask);
+  mask-image: var(--gp-se-mask);
+}
+/* Where the effect starts: the bar's vertical CENTRE (--gp-se-start = half
+   the inset), ramping up to full strength at the bar's edge and fading out
+   beyond it. Behind the top half of the bar the layers paint nothing — a
+   square band of colour there showed through the bar's rounded corners as
+   dark, sharp corners — and starting at the centre (instead of exactly at
+   the bar's edge) hides where the effect begins behind the glass, so there's
+   no visible hard line. */
+[data-gp-se-layer] {
+  --gp-se-start: calc(var(--gp-se-inset) * 0.5);
+}
+/* Soft: three slices — light blur over the whole fade, more blur over less
+   of it, the most only near the bar — over the colour fading out. */
+[data-gp-se-effect='soft'] > [data-gp-se-layer] {
+  background: linear-gradient(
+    var(--gp-se-dir),
+    transparent 0,
+    transparent var(--gp-se-start),
+    color-mix(in srgb, var(--gp-se-color, #fff) 55%, transparent) var(--gp-se-inset),
+    transparent 100%
+  );
+}
+[data-gp-se-effect='soft'] > [data-gp-se-layer] > i:nth-child(1) {
+  --gp-se-mask: linear-gradient(var(--gp-se-dir), transparent 0, transparent var(--gp-se-start), #000 var(--gp-se-inset), #000 calc(var(--gp-se-inset) + var(--gp-se-size, 32px) * 0.35), transparent 100%);
+  -webkit-backdrop-filter: blur(1.5px);
+  backdrop-filter: blur(1.5px);
+}
+[data-gp-se-effect='soft'] > [data-gp-se-layer] > i:nth-child(2) {
+  --gp-se-mask: linear-gradient(var(--gp-se-dir), transparent 0, transparent var(--gp-se-start), #000 var(--gp-se-inset), #000 calc(var(--gp-se-inset) + var(--gp-se-size, 32px) * 0.1), transparent calc(var(--gp-se-inset) + var(--gp-se-size, 32px) * 0.7));
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+[data-gp-se-effect='soft'] > [data-gp-se-layer] > i:nth-child(3) {
+  --gp-se-mask: linear-gradient(var(--gp-se-dir), transparent 0, transparent var(--gp-se-start), #000 var(--gp-se-inset), #000 var(--gp-se-inset), transparent calc(var(--gp-se-inset) + var(--gp-se-size, 32px) * 0.4));
+  -webkit-backdrop-filter: blur(9px);
+  backdrop-filter: blur(9px);
+}
+/* Hard: one strong blur slice and a mostly opaque backing, both ending in a
+   crisp line (a 1.5px step) where the soft fade would end. */
+[data-gp-se-effect='hard'] > [data-gp-se-layer] {
+  background: linear-gradient(
+    var(--gp-se-dir),
+    transparent 0,
+    transparent var(--gp-se-start),
+    color-mix(in srgb, var(--gp-se-color, #fff) 82%, transparent) var(--gp-se-inset),
+    color-mix(in srgb, var(--gp-se-color, #fff) 72%, transparent) calc(100% - 1.5px),
+    transparent 100%
+  );
+}
+[data-gp-se-effect='hard'] > [data-gp-se-layer] > i:nth-child(1) {
+  --gp-se-mask: linear-gradient(var(--gp-se-dir), transparent 0, transparent var(--gp-se-start), #000 var(--gp-se-inset), #000 calc(100% - 1.5px), transparent 100%);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+[data-gp-se-effect='hard'] > [data-gp-se-layer] > i:nth-child(n + 2) {
+  display: none;
+}
+/* Reduce transparency: no blur — a stronger plain fade. */
+@media (prefers-reduced-transparency: reduce) {
+  [data-gp-se-layer] > i {
+    display: none;
+  }
+  [data-gp-se-effect='soft'] > [data-gp-se-layer] {
+    background: linear-gradient(var(--gp-se-dir), transparent 0, transparent var(--gp-se-start), var(--gp-se-color, #fff) var(--gp-se-inset), transparent 100%);
+  }
+}
+
+/* Melting glass moved to the float layer by itself (registry.js
+   liquidNeedsFloat, live.js liftAboveFloat): its own HTML stacks above the
+   float canvas, which would otherwise draw over its label. */
+[data-glass-lifted] {
+  z-index: var(--glass-lift-z, 50);
+}
+[data-glass-lifted][data-glass-lift-pos] {
+  position: relative;
+}
+
+/* =============================================================================
+ * Custom shapes (1.5.2, sdfShape.js): shape: { path } / { svg } / { text }.
+ * WebGL draws the real outline from a distance field; these rules are the
+ * hand-over around it and the CSS-tier fallback (a mask).
+ * ========================================================================== */
+/* The icon a shape was taken from (shape: { svg: 'child' }): the glass IS
+   the icon now, so the original drawing steps aside (it stays in the page
+   for its size and its accessible name). */
+[data-glass-active] [data-glass-shape-source] {
+  visibility: hidden;
+}
+/* Text glass (<GlassText>): the glyphs are the glass, so the DOM text —
+   still there, selectable and read by screen readers — turns see-through
+   wherever glass draws it (WebGL, or the CSS glass below). With no glass
+   at all it stays ordinary text. */
+[data-glass-shape='text']:is([data-glass-drawn], [data-gp-css-on]) {
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+  text-shadow: none !important;
+}
+/* CSS tier: just the frosted, tinted pane, masked to the outline (the edge
+   layers are rounded-rectangle rings, which don't fit a custom outline).
+   The mask sits on the backdrop-filter layer ITSELF: on an ancestor it would
+   make that ancestor the backdrop root, and the pane would frost nothing. */
+[data-glass-shape] > [data-gp-css] > [data-gp-css-layer]:not([data-gp-css-layer='pane']) {
+  display: none !important;
+}
+[data-glass-shape] > [data-gp-css] > [data-gp-css-layer='pane'] {
+  border-radius: 0;
+  -webkit-mask: var(--glass-shape-mask, none) center / 100% 100% no-repeat;
+  mask: var(--glass-shape-mask, none) center / 100% 100% no-repeat;
 }

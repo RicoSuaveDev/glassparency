@@ -57,10 +57,22 @@
 import { getGlobal, resolveGlass, subscribeConfig } from './config';
 import { isExactBackground, isImageBackdrop, subscribeImageBackdrop } from './pageBackground';
 import { allEntries, getEntry, placement, requestRender, subscribeProps, subscribeStructure } from './registry';
-import { AUTO_FALLBACK_RADIUS } from './rim'; // (not shapes.js: that imports three.js)
+import { AUTO_FALLBACK_RADIUS, cornerN, squircleExtent } from './rim'; // (not shapes.js: that imports three.js)
+import { followLightAngle, followsLight, setLightVar, subscribeLightFollow } from './lightFollow';
+
+/**
+ * "corners": "squircle" in live glass: the ::before layer gets
+ * `corner-shape: squircle` (glass.css, [data-glass-corners]) with the
+ * squircle's extent as its border-radius — the exact curve of the WebGL
+ * slab (rim.js) — and the displacement map follows it. Chromium has
+ * corner-shape since 139; an older one keeps round corners (map included),
+ * so the bend always matches the outline that is drawn.
+ */
+const CORNER_SHAPE = typeof CSS !== 'undefined' && Boolean(CSS.supports?.('corner-shape', 'squircle'));
 import { mapKey, requestMap } from './liveMaps';
 import { isCanvasMode, requestPagePaint } from './pageCanvas';
 import { MAX_RIPPLES, activeRipples, subscribeRipples } from './ripple';
+import { groupOf } from './blendGroup';
 
 /** Can this browser bend the live backdrop with an SVG filter? (Chromium only) */
 export const LIVE_SUPPORTED = (() => {
@@ -171,6 +183,7 @@ function syncSome(ids) {
     const e = getEntry(id);
     if (!e) continue;
     const mode = modeOf(e, cache);
+    liftAboveFloat(e);
     if (e.liveMode !== mode) {
       sync();
       return;
@@ -190,6 +203,8 @@ function modeOf(e, cache) {
     const parent = parentEl ? getEntry(Number(parentEl.dataset.glassId)) : null;
     const parentMode = parent ? modeOf(parent, cache) : null;
     if (p.morph) mode = parentMode ? 'tint' : null; // melting shapes need the WebGL liquid shader
+    // (1.5.2: so do glass-group members and custom shapes — path / svg / text.)
+    else if (p.customShape || groupOf(e.el)) mode = parentMode ? 'tint' : null;
     // Glass inside live glass (chips in the header, buttons on a dock card):
     // live too, with its OWN filter sized to it. Chromium layers nested
     // backdrop-filters fine — the child bends the parent's frosted glass +
@@ -222,6 +237,7 @@ function sync() {
   let changed = false;
   for (const e of allEntries()) {
     const mode = modeOf(e, cache);
+    liftAboveFloat(e); // (1.5.2: melting glass moved to float — see below)
     if (e.liveMode !== mode) {
       e.liveMode = mode; // GlassCanvas skips live/tint elements; snapshot.js too
       changed = true;
@@ -243,6 +259,32 @@ function sync() {
   if (changed) requestRender();
 }
 
+/**
+ * (1.5.2) Melting glass moved to the float layer by itself (registry.js
+ * liquidNeedsFloat — group members and custom shapes over an image/gradient
+ * page) is drawn by a canvas that sits OVER the page content (z-index
+ * global.zIndex.float). Its element's own HTML — a button's label, an icon —
+ * must stack above that canvas or the glass hides it, so the element gets
+ * z-index float + 1 (glass.css [data-glass-lifted]) for as long as it's
+ * there. A site that put the glass on "float" itself handles its stacking
+ * itself, as before.
+ */
+function liftAboveFloat(e) {
+  const el = e.el;
+  const lifted = Boolean(placement(e.id).lifted);
+  if (lifted) {
+    if (el.dataset.glassLifted === undefined) el.dataset.glassLifted = '';
+    const z = String(getGlobal().zIndex.float + 1);
+    if (el.style.getPropertyValue('--glass-lift-z') !== z) el.style.setProperty('--glass-lift-z', z);
+    // z-index needs a positioned element; only static ones are made relative.
+    if (el.dataset.glassLiftPos === undefined && getComputedStyle(el).position === 'static') el.dataset.glassLiftPos = '';
+  } else if (el.dataset.glassLifted !== undefined) {
+    delete el.dataset.glassLifted;
+    delete el.dataset.glassLiftPos;
+    el.style.removeProperty('--glass-lift-z');
+  }
+}
+
 /** Write the element's live look: tint background (+ the SVG filter if live). */
 function apply(e, mode) {
   const el = e.el;
@@ -262,7 +304,15 @@ function apply(e, mode) {
   const r = el.getBoundingClientRect();
   const w = Math.max(1, Math.round(r.width));
   const h = Math.max(1, Math.round(r.height));
-  const radius = shapeRadius(p, w, h, el);
+  let radius = shapeRadius(p, w, h, el);
+  // Squircle corners: the layer's radius becomes the squircle's extent
+  // (+ corner-shape in glass.css); the map below uses the same outline.
+  const cn = CORNER_SHAPE ? cornerN(p, radius) : 0;
+  if (cn) radius = squircleExtent(radius, w, h);
+  if ((el.dataset.glassCorners || '') !== (cn ? 'squircle' : '')) {
+    if (cn) el.dataset.glassCorners = 'squircle';
+    else delete el.dataset.glassCorners;
+  }
   setVar(el, '--glass-live-radius', `${radius}px`);
   setVar(el, '--glass-live-bg', (p.pressGlow > 0 ? glowCss(p) + ', ' : '') + tintCss(p));
   setVar(el, 
@@ -274,7 +324,18 @@ function apply(e, mode) {
   if (p.shadowOpacity > 0) {
     shadows.push(`${p.shadowX}px ${p.shadowY}px ${p.shadowBlur}px ${p.shadowSpread}px ${colorCss(p.shadowColor || '#1e1b4b', p.shadowOpacity)}`);
   }
-  if (mode === 'live' && (p.rimLight > 0 || p.innerGlow > 0)) shadows.push(rimShadow(p));
+  // lightFollow: the rim shadows read the light direction from CSS variables
+  // that follow the pointer / tilt (relightLive); off → the fixed string.
+  const follow = mode === 'live' && p.rimLight > 0 && followsLight(p.lightFollow, p.lightFollowAmount);
+  if (follow) {
+    liveFollow.set(e.id, { el, p });
+    offFollow ||= subscribeLightFollow(relightLive);
+    relightOne(el, p);
+  } else if (liveFollow.delete(e.id)) {
+    setLightVar(el, '--glass-lx', null);
+    setLightVar(el, '--glass-ly', null);
+  }
+  if (mode === 'live' && (p.rimLight > 0 || p.innerGlow > 0)) shadows.push(rimShadow(p, follow));
   setVar(el, '--glass-live-shadow', shadows.join(', ') || 'none');
   if (mode !== 'live') {
     // 'none', not removeProperty: custom properties INHERIT, so a removed
@@ -292,7 +353,7 @@ function apply(e, mode) {
   const id = `dp-live-${e.id}`;
   // Ripples (ripple.js): only groups with ripple > 0 get the extra stages.
   const ripple = p.ripple > 0 ? { amp: p.ripple, wave: p.rippleWavelength } : null;
-  const key = `${w}|${h}|${radius}|${rim}|${strength.toFixed(1)}|${ca.toFixed(3)}|${p.profile}|${p.minify.toFixed(3)}|${ripple ? `${ripple.amp}/${ripple.wave}` : '-'}`;
+  const key = `${w}|${h}|${radius}|${rim}|${strength.toFixed(1)}|${ca.toFixed(3)}|${p.profile}|${p.minify.toFixed(3)}|${ripple ? `${ripple.amp}/${ripple.wave}` : '-'}${cn ? '|sq' : ''}`;
   let f = filters.get(e.id);
   if (!f) {
     const node = document.createElementNS(SVG_NS, 'filter');
@@ -306,7 +367,7 @@ function apply(e, mode) {
     // in a worker. Until a new one arrives the filter keeps its previous map,
     // stretched to the new size (a resizing knob / lens never flickers); then
     // this element is synced again and picks it from the cache.
-    const params = { w, h, radius, rim, profile: p.profile, strength, minify: p.minify };
+    const params = { w, h, radius, rim, profile: p.profile, strength, minify: p.minify, cornerN: cn };
     const mk = mapKey(params);
     f.wantMap = mk;
     const map =
@@ -342,10 +403,14 @@ const LIVE_VARS = ['--glass-live-radius', '--glass-live-bg', '--glass-live-borde
 
 function clearLive(e) {
   if (e.liveMode) e.liveMode = null;
+  liveFollow.delete(e.id); // (lightFollow)
   const el = e.el;
   if (!el?.dataset?.glassLive) return;
   delete el.dataset.glassLive;
   delete el.dataset.glassPos;
+  delete el.dataset.glassCorners; // (squircle corners)
+  setLightVar(el, '--glass-lx', null);
+  setLightVar(el, '--glass-ly', null);
   for (const v of LIVE_VARS) el.style.removeProperty(v);
 }
 
@@ -562,14 +627,38 @@ function drawRipples(id) {
 
 // (The displacement map itself — rim bend + minify — is made in liveMaps.js.)
 
+// --- lightFollow (lightFollow.js): live glass whose rim light follows the pointer / tilt ----
+const liveFollow = new Map(); // entry id → { el, p } (only glass with lightFollow on)
+let offFollow = null; // the lightFollow subscription (made with the first such element)
+/** Aim one element's rim light: --glass-lx / --glass-ly = the light direction (CSS axes). */
+function relightOne(el, p) {
+  const deg = followLightAngle(p.lightAngle, p.lightFollow, p.lightFollowAmount, el.getBoundingClientRect());
+  const a = (deg * Math.PI) / 180;
+  setLightVar(el, '--glass-lx', Math.sin(a).toFixed(4));
+  setLightVar(el, '--glass-ly', (-Math.cos(a)).toFixed(4));
+}
+/** Every settling frame of the pointer / tilt: re-aim each following element. */
+function relightLive() {
+  for (const { el, p } of liveFollow.values()) if (el.isConnected) relightOne(el, p);
+}
+
 /** Rim light + inner glow as inset box-shadows (light from lightAngle). */
-function rimShadow(p) {
+function rimShadow(p, follow = false) {
   const a = (p.lightAngle * Math.PI) / 180;
   const lx = Math.sin(a); // towards the light, CSS axes (y down)
   const ly = -Math.cos(a);
   const w = p.rimWidth;
   const out = [];
-  if (p.rimLight > 0) {
+  if (p.rimLight > 0 && follow) {
+    // lightFollow: the same three shadows, their offsets scaled from the
+    // light direction in --glass-lx / --glass-ly (relightLive writes them
+    // as the pointer / tilt moves; one custom-property write per element
+    // instead of rebuilding the whole shadow list).
+    const o = (v, k) => `calc(var(${v}, ${(v === '--glass-lx' ? lx : ly).toFixed(4)}) * ${(k * w).toFixed(3)}px)`;
+    out.push(`inset ${o('--glass-lx', -1)} ${o('--glass-ly', -1)} ${(w * 0.6).toFixed(2)}px rgba(255,255,255,${(p.rimLight * 0.95).toFixed(3)})`);
+    out.push(`inset ${o('--glass-lx', 0.8)} ${o('--glass-ly', 0.8)} ${(w * 0.6).toFixed(2)}px rgba(255,255,255,${(p.rimLight * 0.45).toFixed(3)})`);
+    out.push(`inset 0 0 0 0.5px rgba(255,255,255,${(p.rimLight * 0.35).toFixed(3)})`);
+  } else if (p.rimLight > 0) {
     // An inset shadow offset AWAY from the light shows on the lit edges.
     out.push(`inset ${(-lx * w).toFixed(2)}px ${(-ly * w).toFixed(2)}px ${(w * 0.6).toFixed(2)}px rgba(255,255,255,${(p.rimLight * 0.95).toFixed(3)})`);
     out.push(`inset ${(lx * w * 0.8).toFixed(2)}px ${(ly * w * 0.8).toFixed(2)}px ${(w * 0.6).toFixed(2)}px rgba(255,255,255,${(p.rimLight * 0.45).toFixed(3)})`);

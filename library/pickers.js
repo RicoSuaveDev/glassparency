@@ -218,6 +218,19 @@ export function createStepper(root, opts = {}) {
     if (btn && e.detail === 0) stepBy(Number(btn.getAttribute('data-gp-step')));
   };
   const key = (e) => {
+    // Home / End: straight to the lowest / highest value (as a spin button).
+    if ((e.key === 'Home' || e.key === 'End') && !disabled) {
+      e.preventDefault();
+      const lo = Math.min(cfg.min, cfg.max);
+      const hi = Math.max(cfg.min, cfg.max);
+      const goal = snap(e.key === 'Home' ? lo : hi);
+      if (goal !== value) {
+        value = goal;
+        sync();
+        onChange?.(value);
+      }
+      return;
+    }
     const dir = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1 }[e.key];
     if (!dir) return;
     e.preventDefault();

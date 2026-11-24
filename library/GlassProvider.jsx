@@ -5,6 +5,9 @@
  * Wrap the app once (e.g. in main.jsx). Props (all optional):
  *     config      a site's own glass config, deep-merged over the built-in
  *                 glass.config.json (see config.js configureGlass)
+ *     look        the page's look: "clear" | "frosted" | "tinted" | "smoke"
+ *                 (or { name, color } — color for "tinted"); see config.js
+ *                 "Looks" (the same store as applyGlassLook)
  *     renderIcon  (name, size) => element, for <Glass icon="name">
  *     injectStyles  false = don't add glass.css to the page; import it
  *                 yourself instead (the npm package ships it as glass.css) —
@@ -45,7 +48,9 @@
  *   6. in Chromium, hands the floating glass to live.js, which bends the
  *      real page in real time (no snapshots).
  *
- * If WebGL ever fails (graphics reset), it switches back to the CSS glass.
+ * If the WebGL context is lost (graphics reset), it shows the CSS glass until
+ * the context is back, then rebuilds every glass canvas from scratch; only
+ * a context that keeps failing switches to the CSS glass for good.
  *
  * Server rendering (Next.js, Remix…): renders just its children on the
  * server and on the first client render, then starts in an effect — so
@@ -56,7 +61,7 @@
 import { lazy, Suspense, useCallback, useEffect, useInsertionEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import glassCss from './glass.css?inline';
-import { configureGlass, getGlobal, glassRoot, notifyConfigChanged, subscribeConfig } from './config';
+import { applyGlassLook, configureGlass, getGlobal, glassRoot, notifyConfigChanged, subscribeConfig } from './config';
 import {
   allEntries,
   cannotMoveWebglGlass,
@@ -87,6 +92,12 @@ const PageGlass = lazy(() => import('./GlassCanvas').then((m) => ({ default: m.P
 
 /** Placeholder "problem" until the first effect has checked the browser. */
 const STARTING = 'starting';
+
+// WebGL context loss recovery (see onLost in the provider).
+const RESTORE_WAIT_MS = 3000; // no "restored" event this long → try a fresh context
+const RESTORE_TRIES = 10; // …this many times (≈ 30 s), then CSS glass for the session
+const MAX_LOSSES = 3; // lost this many times…
+const LOSS_WINDOW_MS = 60000; // …within this long = a broken GPU / driver: stop trying
 
 /**
  * Why WebGL glass can't run here (null = it can).
@@ -159,7 +170,7 @@ export function ensureGlassStyles(nonce) {
 }
 let styleUsers = 0;
 
-export default function GlassProvider({ children, config, renderIcon, injectStyles = true, nonce }) {
+export default function GlassProvider({ children, config, look, renderIcon, injectStyles = true, nonce }) {
   // --- Props that feed the (module-level) stores, applied while rendering so
   // children rendering in this same pass already see them. Config changes are
   // announced in an effect (no other component is updated during render).
@@ -170,6 +181,19 @@ export default function GlassProvider({ children, config, renderIcon, injectStyl
     configKey.current = nextKey;
     configureGlass(config ?? null, { silent: true });
     announce.current = true;
+  }
+  // The look prop: applied like the config (while rendering, announced in
+  // the effect below). Only when the prop is given — undefined leaves the
+  // page look to applyGlassLook() / the config's global.look.
+  const lookKey = useRef(undefined);
+  const nextLook = look === undefined ? undefined : look === null || typeof look === 'string' ? look || null : stableKey(look);
+  if (nextLook !== lookKey.current) {
+    lookKey.current = nextLook;
+    if (look !== undefined) {
+      const l = look && typeof look === 'object' ? look : { name: look };
+      applyGlassLook(l.name ?? null, { color: l.color }, { silent: true });
+      announce.current = true;
+    }
   }
   if (renderIcon !== undefined) setIconRenderer(renderIcon);
   if (nonce !== undefined) setSnapshotNonce(nonce);
@@ -236,7 +260,10 @@ export default function GlassProvider({ children, config, renderIcon, injectStyl
 
   // --- Can WebGL glass run? (checked after mounting: same HTML as the server) ---
   const [problem, setProblem] = useState(STARTING);
-  const [lost, setLost] = useState(null); // WebGL context lost → CSS glass for this session
+  const [lost, setLost] = useState(null); // WebGL can't recover → CSS glass for this session
+  // WebGL context lost, waiting for it to come back (why, else null): the
+  // canvases stay mounted, CSS glass shows meanwhile (see onLost below).
+  const [recovering, setRecovering] = useState(null);
   const [layout, setLayout] = useState(() => layoutOf());
   const active = !duplicate && !problem && !lost;
   // Mobile layout: the rest of the page stays CSS glass (no <html data-glass>,
@@ -288,9 +315,10 @@ export default function GlassProvider({ children, config, renderIcon, injectStyl
     else if (!active) {
       setReady(false);
       setStatus('fallback', lost || problem);
-    } else if (!ready) setStatus('loading', 'downloading the 3D engine');
+    } else if (recovering) setStatus('loading', `${recovering} — waiting for the graphics card to come back`);
+    else if (!ready) setStatus('loading', 'downloading the 3D engine');
     else setStatus('on', '');
-  }, [active, ready, lost, problem, duplicate]);
+  }, [active, ready, lost, problem, duplicate, recovering]);
   useLayoutEffect(() => {
     const root = document.documentElement;
     if (active && ready) {
@@ -385,7 +413,82 @@ export default function GlassProvider({ children, config, renderIcon, injectStyl
     return off;
   }, []);
 
-  const onLost = useCallback((why) => setLost(why), []);
+  // --- WebGL context loss → recovery ---------------------------------------------------------
+  // A lost context (GPU driver reset, the GPU process crashing, the
+  // browser reclaiming memory from a background tab, a laptop switching
+  // GPUs) used to switch the page to CSS glass for the rest of the session.
+  // Now the canvases keep their lost context restorable (preventDefault in
+  // GlassCanvas / pageCanvas.js) and the page shows the CSS glass only
+  // WHILE it is lost:
+  //   lost      → `recovering` set: <html data-glass> comes off (ready =
+  //               false), the canvases stay mounted so they can hear…
+  //   restored  → `generation` + 1: every glass canvas (or the page canvas's
+  //               glass engine) is re-mounted from scratch — a new renderer,
+  //               new materials, buffers, textures and shaders — and the
+  //               first frame it draws sets data-glass="on" again.
+  //   no restore within RESTORE_WAIT_MS → if a fresh WebGL 2 context can be
+  //               made (blocker() test), rebuild anyway (some losses are
+  //               never "restored" — the browser expects a new canvas);
+  //               otherwise keep waiting, at most RESTORE_TRIES times.
+  // A context that keeps getting lost (MAX_LOSSES within LOSS_WINDOW_MS) is
+  // a broken GPU / driver: then the CSS glass stays for the session, as before.
+  // (`recovering` itself is declared next to `lost`, above: the status uses it.)
+  const [generation, setGeneration] = useState(0); // bumped to re-mount every glass canvas
+  const recoveringRef = useRef(false); // (several canvases lose their context at once: count it once)
+  const lossTimes = useRef([]);
+  const retryTimer = useRef(0);
+  const rebuild = useCallback(() => {
+    clearTimeout(retryTimer.current);
+    retryTimer.current = 0;
+    if (!recoveringRef.current) return;
+    recoveringRef.current = false;
+    setRecovering(null);
+    setGeneration((n) => n + 1);
+  }, []);
+  const onLost = useCallback(
+    (why, { restorable = false } = {}) => {
+      if (!restorable) {
+        clearTimeout(retryTimer.current);
+        recoveringRef.current = false;
+        setRecovering(null);
+        setLost(why);
+        return;
+      }
+      if (recoveringRef.current) return; // (another canvas, same loss)
+      const now = performance.now();
+      lossTimes.current = [...lossTimes.current.filter((t) => now - t < LOSS_WINDOW_MS), now];
+      if (lossTimes.current.length >= MAX_LOSSES) {
+        setLost(`${why}, ${MAX_LOSSES} times in a minute — CSS glass for this session`);
+        return;
+      }
+      console.info(`glass: ${why} — showing CSS glass until it's back`);
+      recoveringRef.current = true;
+      setReady(false);
+      setRecovering(why);
+      // The fallback for a context the browser never restores.
+      let tries = 0;
+      const retry = () => {
+        if (!recoveringRef.current) return;
+        tries += 1;
+        if (blocker() === null) rebuild();
+        else if (tries < RESTORE_TRIES) retryTimer.current = setTimeout(retry, RESTORE_WAIT_MS);
+        else {
+          recoveringRef.current = false;
+          setRecovering(null);
+          setLost(`${why} and never came back`);
+        }
+      };
+      clearTimeout(retryTimer.current);
+      retryTimer.current = setTimeout(retry, RESTORE_WAIT_MS);
+    },
+    [rebuild]
+  );
+  // The browser restored a lost context: rebuild every canvas cleanly.
+  const onRestored = useCallback(() => {
+    if (recoveringRef.current) console.info('glass: WebGL context restored — rebuilding the glass');
+    rebuild();
+  }, [rebuild]);
+  useEffect(() => () => clearTimeout(retryTimer.current), []);
   const onReady = useCallback(() => setReady(true), []);
 
   // Is any glass on layer "top"? (Then the provider mounts its own fallback
@@ -434,7 +537,8 @@ export default function GlassProvider({ children, config, renderIcon, injectStyl
       {content}
       {canvasMode && active && (
         <Suspense fallback={null}>
-          <PageGlass onLost={onLost} onReady={onReady} />
+          {/* (key: a new generation after a lost WebGL context = a clean rebuild) */}
+          <PageGlass key={generation} onLost={onLost} onRestored={onRestored} onReady={onReady} />
         </Suspense>
       )}
       {active &&
@@ -461,10 +565,10 @@ export default function GlassProvider({ children, config, renderIcon, injectStyl
         .map(([layer, el]) =>
           createPortal(
             <Suspense fallback={null}>
-              <GlassCanvas layer={layer} layers={mobileOnly ? mobileLayers : undefined} pinned onLost={onLost} />
+              <GlassCanvas layer={layer} layers={mobileOnly ? mobileLayers : undefined} pinned onLost={onLost} onRestored={onRestored} />
             </Suspense>,
             el,
-            `glass-pinned-${layer}`
+            `glass-pinned-${layer}-${generation}`
           )
         )}
       {active &&
@@ -473,10 +577,10 @@ export default function GlassProvider({ children, config, renderIcon, injectStyl
           .map(([layer, el]) =>
           createPortal(
             <Suspense fallback={null}>
-              <GlassCanvas layer={layer} onLost={onLost} onReady={layer === 'base' ? onReady : undefined} />
+              <GlassCanvas layer={layer} onLost={onLost} onRestored={onRestored} onReady={layer === 'base' ? onReady : undefined} />
             </Suspense>,
             el,
-            `glass-${layer}`
+            `glass-${layer}-${generation}`
           )
         )}
       {mobileOnly &&
@@ -485,10 +589,10 @@ export default function GlassProvider({ children, config, renderIcon, injectStyl
           .map(([layer, el]) =>
             createPortal(
               <Suspense fallback={null}>
-                <GlassCanvas layer={layer} layers={mobileLayers} onLost={onLost} />
+                <GlassCanvas layer={layer} layers={mobileLayers} onLost={onLost} onRestored={onRestored} />
               </Suspense>,
               el,
-              `glass-${layer}`
+              `glass-${layer}-${generation}`
             )
           )}
     </>

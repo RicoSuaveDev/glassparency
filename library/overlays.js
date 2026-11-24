@@ -557,7 +557,20 @@ export function createMenu(anchor, menu, opts = {}) {
     if (viaKeys && its[active]) its[active].focus({ preventScroll: false });
     loop.kick();
   };
+  // Roving focus (WAI-ARIA menu / listbox): the items are reached with the
+  // arrow keys, not Tab, so none of them is a Tab stop (tabindex −1; the
+  // keys focus them by hand). Items that already have a tabindex keep it.
+  const roved = new Set();
+  const roveItems = () => {
+    for (const n of items()) {
+      if (n.hasAttribute('tabindex') && !roved.has(n)) continue;
+      if (n.tabIndex !== -1) n.tabIndex = -1;
+      roved.add(n);
+    }
+  };
+  roveItems();
   const markSelected = () => {
+    roveItems(); // (items may have been added since)
     items().forEach((n, j) => {
       const on = j === selected;
       if (listbox || n.getAttribute('role') === 'option') n.setAttribute('aria-selected', String(on));
@@ -627,7 +640,11 @@ export function createMenu(anchor, menu, opts = {}) {
       e.preventDefault();
       if (active >= 0) choose(active);
     } else if (e.key === 'Tab') {
-      pop.close(false);
+      // Close and give the focus back to the button first, so the browser's
+      // own Tab move continues from there (the next control after the menu
+      // button) — not from an item in the overlay at the end of <body>.
+      // (Not when the focus is still ON the button: it moves on by itself.)
+      pop.close(menu.contains(document.activeElement));
     } else if (e.key.length === 1 && /\S/.test(e.key)) {
       // Type-ahead: the next item starting with the letters typed (1 s window).
       const now = Date.now();
@@ -654,6 +671,10 @@ export function createMenu(anchor, menu, opts = {}) {
       e.preventDefault();
       keyOpen = true;
       pop.open();
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      // Opened from the keyboard (the button's own click follows): start
+      // with an item highlighted, so ↓ / ↑ / Enter work straight away.
+      keyOpen = true;
     }
   };
   menu.addEventListener('pointermove', hover);
@@ -689,6 +710,8 @@ export function createMenu(anchor, menu, opts = {}) {
       anchor.removeEventListener('keydown', anchorKey);
       pop.destroy();
       hl.remove();
+      for (const n of roved) if (n.isConnected) n.removeAttribute('tabindex');
+      roved.clear();
       menu.removeAttribute('data-gp-menu');
     },
   };
@@ -770,7 +793,14 @@ export function createTooltip(anchor, opts = {}) {
   const loop = makeLoop((dt) => {
     const goal = showing ? 1 : 0;
     if (reducedMotion()) cur.s = goal;
-    else [cur.s, cur.v] = spring(cur.s, cur.v, goal, showing ? 520 : 900, showing ? 0.55 : 1, dt);
+    else {
+      // (not `[cur.s, cur.v] = spring(…)`: Next.js's minifier (SWC, Turbopack
+      // build) turned that line into `[0,0]=…` — a syntax error that broke
+      // `next build` for any page using the tooltip)
+      const [s, v] = spring(cur.s, cur.v, goal, showing ? 520 : 900, showing ? 0.55 : 1, dt);
+      cur.s = s;
+      cur.v = v;
+    }
     const s = 0.45 + 0.55 * Math.max(0, cur.s);
     tip.style.scale = `${s.toFixed(4)}`;
     tip.style.setProperty('--gp-on', clamp01(cur.s).toFixed(3));
@@ -943,6 +973,30 @@ export function createSheet(sheet, opts = {}) {
     if (isOpen && e.key === 'Escape') {
       e.stopPropagation();
       self.close();
+    } else if (isOpen && e.key === 'Tab') trapTab(e);
+  };
+  // aria-modal: the page behind is out of reach while the sheet is open, so
+  // Tab / Shift+Tab cycle through the sheet's own controls (and land back
+  // in it if the focus was somewhere else) instead of walking off into the
+  // dimmed page.
+  const TABBABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"]), [contenteditable="true"]';
+  const trapTab = (e) => {
+    const all = [...sheet.querySelectorAll(TABBABLE)].filter((n) => !n.hidden && n.getClientRects().length > 0);
+    const first = all[0];
+    const last = all[all.length - 1];
+    const at = document.activeElement;
+    if (!first) {
+      e.preventDefault(); // (nothing to tab to: stay on the sheet)
+      sheet.focus({ preventScroll: true });
+    } else if (!sheet.contains(at)) {
+      e.preventDefault();
+      (e.shiftKey ? last : first).focus({ preventScroll: true });
+    } else if (e.shiftKey && (at === first || at === sheet)) {
+      e.preventDefault();
+      last.focus({ preventScroll: true });
+    } else if (!e.shiftKey && at === last) {
+      e.preventDefault();
+      first.focus({ preventScroll: true });
     }
   };
   const finishClose = () => {
@@ -1111,7 +1165,14 @@ export function createSheet(sheet, opts = {}) {
 /**
  * A stack of Liquid Glass toasts (banners) at the top of the window.
  * @param {{ group?: string, max?: number, duration?: number }} [opts]
- * @returns {{ show(t: { title?: string, body?: string, icon?: Element|string, duration?: number, props?: object }): () => void, clear(): void, destroy(): void }}
+ * Screen readers: each toast's title + body is read out through a live
+ * region — politely (role "status", the default) or straight away
+ * (`role: "alert"`, for errors). The regions are visually hidden and stay in
+ * the page for the toaster's whole life: a live region that is added
+ * together with its text is often not read at all (the visible stack comes
+ * and goes with its toasts, so it can't be the live region itself).
+ * @returns {{ show(t: { title?: string, body?: string, icon?: Element|string, duration?: number,
+ *           role?: 'status'|'alert', props?: object }): () => void, clear(): void, destroy(): void }}
  */
 export function createToaster(opts = {}) {
   prewarm();
@@ -1119,8 +1180,36 @@ export function createToaster(opts = {}) {
   const max = opts.max ?? 3;
   const stack = document.createElement('div');
   stack.setAttribute('data-gp-toasts', '');
-  stack.setAttribute('role', 'status');
-  stack.setAttribute('aria-live', 'polite');
+  // The announcers (see above): one polite, one assertive.
+  const SR_ONLY = 'position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap';
+  const announcer = (role) => {
+    const n = document.createElement('div');
+    n.setAttribute('data-gp-toast-announcer', role);
+    n.setAttribute('role', role);
+    n.setAttribute('aria-live', role === 'alert' ? 'assertive' : 'polite');
+    n.setAttribute('aria-atomic', 'true');
+    n.style.cssText = SR_ONLY;
+    document.body.appendChild(n);
+    return n;
+  };
+  const live = { status: announcer('status'), alert: announcer('alert') };
+  let clearLive = 0;
+  /** Read a toast out: swap the region's text (cleared again later, so the same text twice is still read). */
+  const announce = (role, text) => {
+    if (!text) return;
+    const n = role === 'alert' ? live.alert : live.status;
+    n.textContent = '';
+    // (A beat after clearing: a region whose text is replaced in the same
+    // task is sometimes not re-read.)
+    setTimeout(() => {
+      n.textContent = text;
+    }, 50);
+    clearTimeout(clearLive);
+    clearLive = setTimeout(() => {
+      live.status.textContent = '';
+      live.alert.textContent = '';
+    }, 7000);
+  };
   const toasts = []; // { el, glass, y, vy, goal, gone, timer, left, press, dx }
   let mounted = false;
 
@@ -1174,7 +1263,7 @@ export function createToaster(opts = {}) {
   };
 
   const self = {
-    show({ title = '', body = '', icon = null, duration, props = {} } = {}) {
+    show({ title = '', body = '', icon = null, duration, role = 'status', props = {} } = {}) {
       if (!mounted) {
         acquire();
         overlay().appendChild(stack);
@@ -1202,6 +1291,9 @@ export function createToaster(opts = {}) {
         txt.appendChild(s);
       }
       el.appendChild(txt);
+      // (Read out by the announcer — the visible copy is skipped, or it'd be read twice.)
+      el.setAttribute('aria-hidden', 'true');
+      announce(role, [title, body].filter(Boolean).join('. '));
       stack.insertBefore(el, stack.firstChild);
       const t = { el, glass: attachGlass(el, group, props), y: -120, vy: 0, goal: 0, gone: false, timer: 0, duration: duration ?? opts.duration ?? 4000, press: null, drag: 0 };
       toasts.unshift(t);
@@ -1245,6 +1337,9 @@ export function createToaster(opts = {}) {
     },
     destroy() {
       loop.stop();
+      clearTimeout(clearLive);
+      live.status.remove();
+      live.alert.remove();
       for (const t of toasts) {
         clearTimeout(t.timer);
         t.glass.destroy();

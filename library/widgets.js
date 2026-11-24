@@ -157,6 +157,47 @@ function bindTap(root, part, readSquish, isDisabled, onTap) {
 // =============================================================================
 const radioGroups = new Map(); // name → Set of radio controllers (they uncheck each other)
 
+/** Radios of a group, in page order (connected ones only). */
+const radiosInOrder = (name) =>
+  [...(radioGroups.get(name) || [])]
+    .filter((c) => c._root.isConnected)
+    .sort((a, b) => (a._root.compareDocumentPosition(b._root) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
+/**
+ * Radios with the same name form a WAI-ARIA radio group:
+ *   • roving focus — only ONE of them is in the Tab order (tabindex 0): the
+ *     checked one, or the first enabled one while none is checked; the
+ *     others get −1 and are reached with the arrow keys (createCheck's key);
+ *   • role="radiogroup" on their shared parent, when they all have the same
+ *     parent and it has no role of its own (removed again with the last
+ *     radio). Radios spread over different parents: give the container the
+ *     role yourself.
+ * Called whenever a radio is drawn (checked changes), disabled, or removed.
+ */
+function syncRadioGroup(name) {
+  const all = radiosInOrder(name);
+  const pick = all.find((c) => c.checked && !c._disabled) || all.find((c) => !c._disabled);
+  for (const c of all) {
+    const ti = c === pick ? 0 : -1;
+    if (c._root.tabIndex !== ti) c._root.tabIndex = ti;
+  }
+  // (At least two radios: while a group is still being created one by one,
+  // the first radio alone would "share" its own <label> as the parent.)
+  const parent = all[0]?._root.parentElement;
+  const shared = all.length > 1 && all.every((c) => c._root.parentElement === parent);
+  if (shared && !parent.hasAttribute('role')) {
+    parent.setAttribute('role', 'radiogroup');
+    parent.setAttribute('data-gp-radiogroup', ''); // (ours: removed with the last radio)
+  }
+  // A parent we marked that no longer holds the whole group: take it back.
+  for (const c of all) {
+    const p = c._root.parentElement;
+    if (p?.hasAttribute('data-gp-radiogroup') && !(shared && p === parent)) {
+      p.removeAttribute('role');
+      p.removeAttribute('data-gp-radiogroup');
+    }
+  }
+}
+
 /**
  * @param {HTMLElement} root  ideally a <button type="button">; its children (label text) stay
  * @param {'checkbox'|'radio'} kind
@@ -175,6 +216,8 @@ function createCheck(root, kind, opts) {
 
   root.setAttribute(radio ? 'data-gp-radio' : 'data-gp-check', '');
   if (!root.hasAttribute('role')) root.setAttribute('role', kind);
+  // (A named radio's tabindex is roved by syncRadioGroup; this is put back on destroy.)
+  const ownTabIndex = root.getAttribute('tabindex');
   if (root.tagName !== 'BUTTON' && !root.hasAttribute('tabindex')) root.tabIndex = 0;
   const box = document.createElement('span');
   box.setAttribute('data-gp-box', '');
@@ -230,6 +273,7 @@ function createCheck(root, kind, opts) {
       dot.style.visibility = s < 0.02 ? 'hidden' : '';
     }
     root.setAttribute('aria-checked', String(checked));
+    if (radio && name) syncRadioGroup(name); // (roving tabindex follows the checked radio)
   };
 
   const loop = makeLoop((dt) => {
@@ -257,6 +301,10 @@ function createCheck(root, kind, opts) {
     get name() {
       return name;
     },
+    /** (radio group) disabled radios are skipped by the arrow keys and the Tab stop */
+    get _disabled() {
+      return disabled;
+    },
     /** (radio group) another radio was picked */
     _uncheck() {
       if (!checked) return;
@@ -280,7 +328,19 @@ function createCheck(root, kind, opts) {
       offTap();
       offConfig();
       root.removeEventListener('keydown', key);
-      if (name) radioGroups.get(name)?.delete(self);
+      if (name) {
+        radioGroups.get(name)?.delete(self);
+        if (radio) {
+          // Our tabindex back; the rest of the group re-picks its Tab stop.
+          if (ownTabIndex === null) root.removeAttribute('tabindex');
+          else root.setAttribute('tabindex', ownTabIndex);
+          if (radioGroups.get(name)?.size) syncRadioGroup(name);
+          else if (root.parentElement?.hasAttribute('data-gp-radiogroup')) {
+            root.parentElement.removeAttribute('role');
+            root.parentElement.removeAttribute('data-gp-radiogroup');
+          }
+        }
+      }
       dotGlass?.destroy();
       boxGlass.destroy();
       box.remove();
@@ -304,11 +364,21 @@ function createCheck(root, kind, opts) {
 
   // Radios: arrow keys pick the next / previous radio of the same name.
   const key = (e) => {
+    // Space (and Enter) on a root that ISN'T a <button> (a <div
+    // role="checkbox" tabindex="0">): the browser makes no click of it, so
+    // toggle here. (A button's own click arrives in bindTap, detail 0.)
+    if (root.tagName !== 'BUTTON' && !disabled && (e.key === ' ' || e.key === 'Enter')) {
+      e.preventDefault();
+      toggle();
+      return;
+    }
     if (!radio || !name || disabled) return;
     const step = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[e.key];
     if (!step) return;
-    const all = [...(radioGroups.get(name) || [])].map((c) => c._root).filter((n) => n.isConnected);
-    all.sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
+    // (Disabled radios are skipped; this one is always in the list.)
+    const all = radiosInOrder(name)
+      .filter((c) => c === self || !c._disabled)
+      .map((c) => c._root);
     const i = all.indexOf(root);
     const nextRoot = all[(i + step + all.length) % all.length];
     if (!nextRoot) return;
@@ -326,6 +396,7 @@ function createCheck(root, kind, opts) {
   const applyDisabled = () => {
     if (root.tagName === 'BUTTON') root.disabled = disabled;
     root.setAttribute('aria-disabled', String(disabled));
+    if (radio && name) syncRadioGroup(name);
   };
   applyDisabled();
   const offConfig = subscribeConfig(() => {
@@ -523,6 +594,31 @@ export function createLensBar(root, opts = {}) {
 
   root.setAttribute('data-gp-lensbar', vertical ? 'vertical' : 'horizontal');
   root.setAttribute('data-gp-no-squish', '');
+  // Screen readers: a bar with role="tablist" (the segmented control sets
+  // it; a site can set it on a tab bar / sidebar) is a WAI-ARIA tab list —
+  // its items become role="tab" (unless they have a role of their own),
+  // aria-selected follows the selection and the focus is "roving": only the
+  // selected tab is in the Tab order (tabindex 0, the others −1) and the
+  // arrow keys move between tabs. A bar WITHOUT that role is navigation
+  // (links): every item stays tabbable and the selected one gets
+  // aria-current="page". (No focus ring either way — glass.css.)
+  const tablist = () => root.getAttribute('role') === 'tablist';
+  const ownRoles = new WeakSet(); // items whose role="tab" we added (removed again on destroy)
+  const tabIndexes = new Map(); // item → its tabindex attribute before we roved it (null = none)
+  if (tablist() && !root.hasAttribute('aria-orientation')) root.setAttribute('aria-orientation', vertical ? 'vertical' : 'horizontal');
+  /** Tab semantics for every item (called on each render: items can come and go). */
+  const syncTabs = (its) => {
+    if (!tablist()) return;
+    its.forEach((it, i) => {
+      if (!it.hasAttribute('role')) {
+        it.setAttribute('role', 'tab');
+        ownRoles.add(it);
+      }
+      if (!tabIndexes.has(it)) tabIndexes.set(it, it.getAttribute('tabindex'));
+      const ti = i === index ? 0 : -1;
+      if (it.tabIndex !== ti) it.tabIndex = ti;
+    });
+  };
   const lens = document.createElement('span');
   lens.setAttribute('data-gp-lens', '');
   lens.setAttribute('aria-hidden', 'true');
@@ -741,6 +837,7 @@ export function createLensBar(root, opts = {}) {
     // so the colour sweeps across the icons exactly where the lens is.
     // --gp-on (0 … 1, how much of the item the lens covers) is there for CSS.
     const its = items();
+    syncTabs(its); // (role="tab" + roving tabindex — see tablist above)
     bx.forEach((b, i) => {
       const it = its[i];
       const overlap = Math.max(0, Math.min(b.a + b.size, a0 + along) - Math.max(b.a, a0)) / (b.size || 1);
@@ -877,6 +974,17 @@ export function createLensBar(root, opts = {}) {
     if (step) next = (index + step + n) % n;
     else if (e.key === 'Home') next = 0;
     else if (e.key === 'End') next = n - 1;
+    else if (e.key === 'Enter' || e.key === ' ') {
+      // Enter / Space on an item that ISN'T a button or link (a <div
+      // role="tab">): the browser doesn't turn those into a click, so pick
+      // it here. (Buttons / links click by themselves — see click below.)
+      const it = e.target.closest?.('[data-gp-item]');
+      const i = items().indexOf(it);
+      if (i < 0 || it.matches('button, a[href], input, summary')) return;
+      e.preventDefault();
+      select(i, true);
+      return;
+    }
     if (next === null) return;
     e.preventDefault();
     items()[next]?.focus();
@@ -964,6 +1072,13 @@ export function createLensBar(root, opts = {}) {
       wipes.clear();
       root.style.removeProperty('--gp-item-base');
       for (const it of items()) it.style.removeProperty('--gp-on');
+      // Undo the tab semantics we added (roles and tabindexes the page set stay).
+      for (const [it, ti] of tabIndexes) {
+        if (ti === null) it.removeAttribute('tabindex');
+        else it.setAttribute('tabindex', ti);
+        if (ownRoles.has(it)) it.removeAttribute('role');
+      }
+      tabIndexes.clear();
       root.removeAttribute('data-gp-lensbar');
       root.removeAttribute('data-gp-no-squish');
     },

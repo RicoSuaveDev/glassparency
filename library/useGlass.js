@@ -33,6 +33,7 @@ import { createSquish } from './squish';
 import { createRipples } from './ripple';
 import { autoTextEls, autoTextOf, dropAutoText, estimateAutoText } from './autoText';
 import { applyCssGlass, removeCssGlass } from './cssGlass';
+import { dropShapeField, onShapesStale, shapeMaskCss } from './sdfShape';
 
 export function useGlass(ref, group, props) {
   const handleRef = useRef(null);
@@ -115,7 +116,7 @@ export function attachGlass(el, group, props = {}) {
     console.warn('glass: this element already had glass — replacing it (one glass per element)', el);
     previous.destroy();
   }
-  let current = props || {};
+  let current = withShapeSource(el, props || {});
   const id = register(el, group, current);
   const entryState = { hover: false, pressed: false, disabled: isDisabled(el) };
   update(id, { state: entryState });
@@ -152,11 +153,16 @@ export function attachGlass(el, group, props = {}) {
     // The library's own CSS glass, shown wherever WebGL / live glass isn't
     // drawing this element (glass.css hides it once they do).
     applyCssGlass(el, cfg.enabled ? cfg : null);
+    applyShape(el, cfg.enabled ? cfg.customShape : null);
   };
   applyDom();
   // Own press-glow value (it inherits, so don't light up with a parent).
   el.style.setProperty('--glass-glow', '0');
   const offConfig = subscribeConfig(applyDom);
+  // Custom text shapes: redraw the CSS mask once web fonts arrive.
+  const offFonts = onShapesStale(() => {
+    if (el.dataset.glassShape === 'text') applyDom();
+  });
   // Glass switching on/off changes the element's own CSS (e.g. the sidebar's
   // inset margins), which padding builds on. (Cancelled on destroy, so a
   // late frame can't put the flags back on an element that lost its glass.)
@@ -320,6 +326,9 @@ export function attachGlass(el, group, props = {}) {
           // busy progress fill resizing every frame; see cannotMoveWebglGlass.)
           if (!cannotMoveWebglGlass(el)) requestRender();
           scheduleLiveSync(el); // live glass rebuilds ITS filter for the new size (just this element)
+          // Custom shapes: the CSS mask follows the new size (text and <svg>
+          // masks are drawn at the element's size; paths scale by themselves).
+          if (el.dataset.glassShape === 'text' || el.dataset.glassShape === 'svg') applyDom();
         })
       : null;
   ro?.observe(el);
@@ -332,7 +341,7 @@ export function attachGlass(el, group, props = {}) {
     /** Replace the per-element props (same as useGlass's third argument). */
     setProps(next) {
       if (destroyed) return;
-      current = next || {};
+      current = withShapeSource(el, next || {});
       update(id, { props: current });
       applyDom();
     },
@@ -373,6 +382,7 @@ export function attachGlass(el, group, props = {}) {
       if (attached.get(el) === handle) attached.delete(el);
       cancelAnimationFrame(statusRaf);
       offConfig();
+      offFonts();
       offStatus();
       mo.disconnect();
       ro?.disconnect();
@@ -392,6 +402,9 @@ export function attachGlass(el, group, props = {}) {
       ripples?.destroy();
       for (const v of ['--glass-px', '--glass-py', '--glass-glow']) el.style.removeProperty(v);
       removeCssGlass(el);
+      applyShape(el, null);
+      dropShapeField(el);
+      withShapeSource(el, null); // (un-hides a shape's source icon)
       for (const k of ['glassActive', 'glassGroup', 'glassBorder', 'glassShadow']) setFlag(el, k, null);
       dropAutoText(el);
       for (const [k, v] of FLAG_VARS) setVar(el, k, v, null);
@@ -421,7 +434,7 @@ export function attachGlass(el, group, props = {}) {
 export function setGlassProps(el, props) {
   const id = Number(el?.dataset?.glassId);
   if (!id || !getEntry(id)) return;
-  update(id, { props: props || {} });
+  update(id, { props: withShapeSource(el, props || {}) }); // (an <svg> shape → markup)
 }
 
 /**
@@ -516,6 +529,66 @@ function cssRadius(cfg, explicit) {
   if (cfg.shape === 'circle') return '50%';
   if (cfg.shape === 'rectangle') return '0px';
   return cfg.radius === 'auto' ? null : `${cfg.radius}px`;
+}
+
+// --- Custom shapes (sdfShape.js): props + the CSS-tier mask ---------------------------
+
+/**
+ * shape: { svg: <svg element> } or { svg: 'child' } → { svg: '<svg…>' }.
+ * Props must stay JSON (resolveGlass caches by JSON.stringify — a DOM
+ * element stringifies to {} and would share one cache slot with every other
+ * element), so the icon is turned into its markup here. 'child' = the
+ * element's own first <svg> (an icon inside the glass button), which is
+ * then hidden ([data-glass-shape-source], glass.css): the glass IS the icon.
+ * Anything else is returned unchanged (same object) — cheap: setGlassProps
+ * runs this on every animation frame.
+ */
+const shapeSourced = new WeakMap(); // glass element → the <svg> child it hides
+function withShapeSource(el, props) {
+  const sh = props?.shape;
+  const marked = shapeSourced.get(el);
+  if (!sh || typeof sh !== 'object' || !sh.svg || (typeof sh.svg === 'string' && sh.svg !== 'child')) {
+    if (marked) {
+      marked.removeAttribute('data-glass-shape-source');
+      shapeSourced.delete(el);
+    }
+    return props;
+  }
+  let svgEl = sh.svg;
+  if (sh.svg === 'child') {
+    svgEl = el.querySelector('svg');
+    if (marked && marked !== svgEl) marked.removeAttribute('data-glass-shape-source');
+    if (svgEl) {
+      svgEl.setAttribute('data-glass-shape-source', '');
+      shapeSourced.set(el, svgEl);
+    } else shapeSourced.delete(el);
+  }
+  const markup = svgEl && typeof svgEl.outerHTML === 'string' ? svgEl.outerHTML.replace(' data-glass-shape-source=""', '') : null;
+  const { svg: _svg, ...rest } = sh;
+  // (No usable <svg>: no custom shape — the group's own shape is used.)
+  return { ...props, shape: markup ? { ...rest, svg: markup } : undefined };
+}
+
+/**
+ * Mark an element with its custom shape's kind (data-glass-shape="path" |
+ * "svg" | "text") and give the CSS tier its outline as a mask
+ * (--glass-shape-mask; glass.css masks the CSS glass pane with it). Text
+ * glass also hides its own glyphs there: the glass is the text.
+ * @param {HTMLElement} el
+ * @param {object|null} shape  normalized (resolveGlass's customShape)
+ */
+function applyShape(el, shape) {
+  if (!shape) {
+    if (el.dataset.glassShape === undefined) return;
+    delete el.dataset.glassShape;
+    el.style.removeProperty('--glass-shape-mask');
+    return;
+  }
+  if (el.dataset.glassShape !== shape.kind) el.dataset.glassShape = shape.kind;
+  const mask = shapeMaskCss(el, shape);
+  if (mask) {
+    if (el.style.getPropertyValue('--glass-shape-mask') !== mask) el.style.setProperty('--glass-shape-mask', mask);
+  } else el.style.removeProperty('--glass-shape-mask');
 }
 
 const FLAG_VARS = [

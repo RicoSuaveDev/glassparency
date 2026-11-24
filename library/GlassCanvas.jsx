@@ -60,8 +60,15 @@ import { snapshot, startSnapshots } from './snapshot';
 import { createTextSampler } from './autoText';
 import { bufferScaleFactor, dprCap, getQualityIndex, noteFrame, samplesCap, subscribeGlassQuality } from './quality';
 import { acquireGeometry, outline } from './shapes';
+import { SQUIRCLE_EXTENT, cornerN } from './rim'; // "corners": "squircle"
+import { followLightAngle } from './lightFollow'; // "lightFollow": pointer / tilt highlight
 import { MAX_RIPPLES, activeRipples } from './ripple';
+import { pausedWhileHidden } from './power';
 import { drawInfo, drawableElements, getPage, needsRecopy, requestPagePaint, setPageRenderer } from './pageCanvas';
+// Glass groups (melting) + custom shapes (distance-field textures) — 1.5.2.
+import { groupOf } from './blendGroup';
+import { onShapesStale, shapeFieldFor } from './sdfShape';
+import { acquireFieldTexture } from './sdfTexture';
 
 /** Scratch vector: a ripple's centre, projected to buffer uv each frame. */
 const rippleAt = new THREE.Vector3();
@@ -74,6 +81,7 @@ const PLANE_Y_POS = new THREE.Vector3(0, 1, 0);
 const CENTER_POINTER = Object.freeze({ x: 0.5, y: 0.5 });
 
 const MAX_LIQUID = 16; // shapes per morph group
+const MAX_SDF = 4; // custom-shape textures per liquid surface (uSdf0–uSdf3)
 const UNIT_PLANE = new THREE.PlaneGeometry(1, 1); // shared by every shadow layer
 import { backgroundFor, fullscreenVertexShader, isImageBackdrop, pageBackgroundShader, pageImageShader, setImageBackdrop } from './pageBackground';
 
@@ -98,7 +106,7 @@ const channelOf = (layer, tier) => 1 + layerIndex(layer) * 6 + tier; // three.js
  * (anchor "page"): it draws only the layer's glass on fixed / sticky
  * elements; the layer's in-page canvas draws the rest (registry.js).
  */
-export default function GlassCanvas({ layer, layers, pinned = false, onLost, onReady }) {
+export default function GlassCanvas({ layer, layers, pinned = false, onLost, onRestored, onReady }) {
   const g = getGlobal();
   // Automatic quality (quality.js): re-render when the level changes.
   useSyncExternalStore(subscribeGlassQuality, getQualityIndex, getQualityIndex);
@@ -123,10 +131,21 @@ export default function GlassCanvas({ layer, layers, pinned = false, onLost, onR
       onCreated={({ gl }) => {
         gl.localClippingEnabled = true; // glass inside scroll boxes is clipped to them
         gl.setClearColor(0x000000, 0);
+        // (Marks the canvas as glass for the devtools' loseGlassContext() test.)
+        gl.domElement.setAttribute('data-glass-webgl', layer);
         gl.domElement.addEventListener('webglcontextlost', (e) => {
           if (!alive.current || !gl.domElement.isConnected) return;
+          // preventDefault = "we can recover": without it the browser never
+          // fires webglcontextrestored. The provider shows CSS glass meanwhile.
           e.preventDefault();
-          onLost?.('The graphics card reset (WebGL context lost)');
+          onLost?.('The graphics card reset (WebGL context lost)', { restorable: true });
+        });
+        // Back: the provider re-mounts every glass canvas (new renderer,
+        // materials, textures) — a clean start rather than trusting each
+        // GPU resource to come back by itself.
+        gl.domElement.addEventListener('webglcontextrestored', () => {
+          if (!alive.current || !gl.domElement.isConnected) return;
+          onRestored?.();
         });
       }}
       aria-hidden="true"
@@ -147,7 +166,7 @@ export default function GlassCanvas({ layer, layers, pinned = false, onLost, onR
  * changes — so the page and the glass refracting it are always the same
  * frame. Redraw requests (hover easing, requestRender) ask for a paint.
  */
-export function PageGlass({ onLost, onReady }) {
+export function PageGlass({ onLost, onRestored, onReady }) {
   useEffect(() => {
     const page = getPage();
     if (!page) return undefined;
@@ -164,8 +183,18 @@ export function PageGlass({ onLost, onReady }) {
     const sizeNow = () => ({ width: canvas.clientWidth, height: canvas.clientHeight, top: 0, left: 0 });
     const changed = { current: null }; // the paint event's changed elements
     let disposed = false;
-    const onContextLost = () => onLost?.('The graphics card reset (WebGL context lost)');
+    // Lost: pageCanvas.js already keeps the context restorable
+    // (preventDefault). Restored: the provider re-mounts this component
+    // (a new generation key) — a new WebGLRenderer and glass world on the
+    // page's restored context; pageCanvas.js rebuilds its own painter.
+    const onContextLost = () => {
+      if (!disposed) onLost?.('The graphics card reset (WebGL context lost)', { restorable: true });
+    };
+    const onContextRestored = () => {
+      if (!disposed) onRestored?.();
+    };
     canvas.addEventListener('webglcontextlost', onContextLost);
+    canvas.addEventListener('webglcontextrestored', onContextRestored);
     const offRenderer = addRenderer(() => requestPagePaint());
     root
       .configure({ gl: renderer, size: sizeNow(), dpr: window.devicePixelRatio || 1, frameloop: 'never', flat: true, linear: true, events: undefined })
@@ -189,6 +218,7 @@ export function PageGlass({ onLost, onReady }) {
       disposed = true;
       offRenderer();
       canvas.removeEventListener('webglcontextlost', onContextLost);
+      canvas.removeEventListener('webglcontextrestored', onContextRestored);
       setPageRenderer(null); // the built-in painter draws the page again
       root.unmount();
     };
@@ -210,6 +240,8 @@ function GlassWorld({ layer, layers, pinned, onReady, single = null }) {
 
   // Redraw on request from anywhere (scroll, hover, config change…).
   useEffect(() => addRenderer(() => invalidate()), [invalidate]);
+  // Custom text shapes: web fonts arrived → redraw (their fields are remade).
+  useEffect(() => onShapesStale(requestRender), []);
   // The floating layers read the page snapshot; start watching the page.
   useEffect(() => (myIndex > 0 && !single ? startSnapshots() : undefined), [myIndex, single]);
 
@@ -391,7 +423,12 @@ function GlassWorld({ layer, layers, pinned, onReady, single = null }) {
         solo.push(c);
         continue;
       }
-      const key = `${c.channel}|${c.morphKey}`;
+      let key = `${c.channel}|${c.morphKey}`;
+      // Caps (blendGroup.js header): a glass group melts at most MAX_LIQUID
+      // members, and one liquid surface holds at most MAX_SDF custom shapes
+      // — past those, the member is liquid glass of its own (no melting).
+      const g0 = groups.get(key);
+      if (g0 && ((c.blendGroup && g0.length >= MAX_LIQUID) || (c.sdfTex && g0.filter((m) => m.sdfTex).length >= MAX_SDF))) key = `${c.channel}|shape:${c.id}`;
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(c);
     }
@@ -636,7 +673,10 @@ function GlassWorld({ layer, layers, pinned, onReady, single = null }) {
     stats.frames += 1;
     stats.lastFrameMs = Math.round((performance.now() - t0) * 10) / 10;
     // Keep going while something is easing or a CSS animation is moving things.
-    if (animating || isHolding() || elems?.retry) invalidate();
+    // (Not while the tab is hidden — global.powerSaving, power.js: the
+    // registry asks for one catch-up frame when it's shown again.)
+    if ((animating || isHolding() || elems?.retry) && !pausedWhileHidden()) invalidate();
+    else if (animating || isHolding() || elems?.retry) requestRender();
   }, 2);
 
   return entries.map((e) => (
@@ -765,6 +805,9 @@ function GlassMesh({ entry, controllers, sharedTexture, canvasLayer, pageMode, p
       c.reportedPinned = false;
       c.slabGeo?.release();
       c.flatGeo?.release();
+      c.sdfTex?.release();
+      c.sdfTex = null;
+      c.sdfField = null;
     };
   }, [controllers, entry.id, c]);
 
@@ -876,15 +919,17 @@ function GlassMesh({ entry, controllers, sharedTexture, canvasLayer, pageMode, p
     // Shape + geometry (shared cache; rebuilt only when the size changes).
     const o = outline(p.shape, box.width * a.sx, box.height * a.sy, p.radius, c.cssRadius);
     const bevel = Math.min(p.bevel, o.r > 0 ? o.r : p.bevel);
-    const key = `${o.w}|${o.h}|${o.r}|${bevel}|${p.bevelSegments}|${p.profile}`;
+    // Squircle corners ("corners": "squircle" — rim.js): 0 = round (as before).
+    const cn = cornerN(p, o.r);
+    const key = `${o.w}|${o.h}|${o.r}|${bevel}|${p.bevelSegments}|${p.profile}${cn ? `|sq${cn}` : ''}`;
     // The exact mesh for every size change: slabs are stretched from one
     // template per corner shape (shapes.js stretchedSlab — a vertex copy,
     // not a new extrusion), so even glass whose size animates every frame
     // (a tab bar lens while dragged, a squishing knob) gets its real shape.
     // (This replaced a stretch-the-old-mesh-and-wait workaround.)
     if (key !== c.shapeKey) {
-      const nextSlab = acquireGeometry('slab', { ...o, bevel, depth: 1, segments: p.bevelSegments, profile: p.profile });
-      const nextFlat = acquireGeometry('flat', o);
+      const nextSlab = acquireGeometry('slab', { ...o, bevel, depth: 1, segments: p.bevelSegments, profile: p.profile, cornerN: cn });
+      const nextFlat = acquireGeometry('flat', { ...o, cornerN: cn });
       c.slabGeo?.release();
       c.flatGeo?.release();
       c.slabGeo = nextSlab;
@@ -894,6 +939,10 @@ function GlassMesh({ entry, controllers, sharedTexture, canvasLayer, pageMode, p
       slab.current.geometry = nextSlab.geo;
       tint.current.geometry = nextFlat.geo;
       tintMat.uniforms.uRadius.value = o.r;
+      // Squircle corners: the tint / shadow / minify distance fields follow
+      // the same outline as the slab (0 = the plain rounded rectangle).
+      tintMat.uniforms.uCornerN.value = cn;
+      shadowMat.uniforms.uCornerN.value = cn;
     }
     // (The mesh is built at the size rounded to ½ px: scale the last bit.)
     const gsx = o.w / c.geo.w;
@@ -933,14 +982,46 @@ function GlassMesh({ entry, controllers, sharedTexture, canvasLayer, pageMode, p
 
     // Morph members are drawn by their group's liquid mesh (GlassWorld).
     const pointer = entry.state.pointer || CENTER_POINTER;
-    if (p.morph) {
-      c.morphKey = p.morph;
+    // --- 1.5.2: glass groups + custom shapes (liquid shader too) ---------
+    // A member of a <GlassGroup> (blendGroup.js) melts with the group's
+    // other glass; a custom shape (shape: { path / svg / text }) has no
+    // formula, so it is drawn by the liquid shader from its distance-field
+    // texture (sdfShape.js → sdfTexture.js) — melting with its group, or on
+    // its own ("shape:<id>"). An explicit `morph` name wins over a group.
+    const blend = p.morph ? null : groupOf(el);
+    const custom = p.customShape;
+    if (custom) {
+      const field = shapeFieldFor(el, custom, o.w, o.h, requestRender);
+      if (!field) {
+        // (Not ready yet — e.g. an <svg> icon still decoding: CSS look meanwhile.)
+        c.visible = false;
+        g.visible = false;
+        return;
+      }
+      if (c.sdfField !== field) {
+        const next = acquireFieldTexture(field);
+        c.sdfTex?.release();
+        c.sdfTex = next;
+        c.sdfField = field;
+      }
+    } else if (c.sdfTex) {
+      c.sdfTex.release();
+      c.sdfTex = null;
+      c.sdfField = null;
+    }
+    c.blendGroup = Boolean(blend);
+    if (p.morph || blend || custom) {
+      c.morphKey = p.morph || (blend ? `blend:${blend.id}` : `shape:${entry.id}`);
+      // Melt reach (the smooth minimum's k): a group's spacing × 2 — two
+      // edges then join exactly when they are `spacing` px apart.
+      c.meltK = p.morph ? p.morphRadius : blend ? blend.spacing * 2 : p.morphRadius;
       c.shape = {
         cx: box.left + box.width / 2,
         cy: -(box.top + box.height / 2),
         hw: o.w / 2,
         hh: o.h / 2,
         r: o.r,
+        cn, // squircle corners (uShape2.w in the liquid shader)
         tint: a.from,
         op: a.op,
         glow: a.glow,
@@ -950,12 +1031,13 @@ function GlassMesh({ entry, controllers, sharedTexture, canvasLayer, pageMode, p
         px: r.left + pointer.x * r.width,
         py: -(r.top + pointer.y * r.height),
       };
-      if (canvasLayer !== null && place.layer !== canvasLayer) c.sig = drawSig(c, a, g, o, pointer, [L, T, R, B], 'm');
+      if (canvasLayer !== null && place.layer !== canvasLayer) c.sig = drawSig(c, a, g, o, pointer, [L, T, R, B], `m${c.meltK}|${c.sdfField?.version ?? ''}`);
       c.visible = true;
       g.visible = false;
       return;
     }
     c.morphKey = null;
+    c.meltK = null;
 
     // Material: saturation / brightness of the refracted page.
     const mu = mat.current?.uniforms;
@@ -967,6 +1049,7 @@ function GlassMesh({ entry, controllers, sharedTexture, canvasLayer, pageMode, p
       mu.glassLiveMinify.value = liveMatch ? 1 : 0;
       mu.glassHalf.value.set(o.w / 2, o.h / 2);
       mu.glassRad.value = o.r;
+      mu.glassCornerN.value = cn; // squircle corners (the live-minify lens shape)
       mu.glassCenter.value.set(g.position.x, g.position.y, 0);
       // Ripples (ripple.js): each ring's centre in buffer uv (projected like
       // glassCenter), radius + strength in px. Keeps drawing while any lives.
@@ -997,7 +1080,10 @@ function GlassMesh({ entry, controllers, sharedTexture, canvasLayer, pageMode, p
     u.uBevel.value = p.bevel;
     u.uRimWidth.value = p.rimWidth;
     u.uInner.value = p.innerGlow;
-    u.uLight.value.copy(lightDir(p.lightAngle));
+    // lightFollow (lightFollow.js): the light turns towards the pointer / the
+    // device tilt — returns lightAngle itself when off (the default).
+    const lightDeg = followLightAngle(p.lightAngle, p.lightFollow, p.lightFollowAmount, r);
+    u.uLight.value.copy(lightDir(lightDeg));
     u.uGlow.value = a.glow;
     u.uLinear.value = blendLinear() ? 1 : 0;
     u.uPointer.value.set(pointer.x, 1 - pointer.y);
@@ -1032,7 +1118,7 @@ function GlassMesh({ entry, controllers, sharedTexture, canvasLayer, pageMode, p
     tint.current.renderOrder = entry.id * 3 + 2;
     // Glass on a LOWER layer (drawn into this canvas's buffers only): its
     // fingerprint for the "everything below" cache (GlassWorld).
-    if (canvasLayer !== null && place.layer !== canvasLayer) c.sig = drawSig(c, a, g, o, pointer, [L, T, R, B], `${borderRgb}|${shadowRgb}`);
+    if (canvasLayer !== null && place.layer !== canvasLayer) c.sig = drawSig(c, a, g, o, pointer, [L, T, R, B], `${borderRgb}|${shadowRgb}${lightDeg !== p.lightAngle ? `|${lightDeg.toFixed(2)}` : ''}`);
     c.visible = true;
     g.visible = true;
   }, 1);
@@ -1104,6 +1190,7 @@ function patchMaterial(material, samples) {
   material.uniforms.glassRad = { value: 0 };
   material.uniforms.glassTargetPx = { value: new THREE.Vector2(1, 1) };
   material.uniforms.glassLinear = { value: 0 }; // global.blend "linear": saturate in linear light
+  material.uniforms.glassCornerN = { value: 0 }; // "corners": "squircle" → the lens shape (0 = round)
   const original = material.onBeforeCompile;
   material.onBeforeCompile = (shader, renderer) => {
     original(shader, renderer); // drei's own changes (adds our uniforms too)
@@ -1114,6 +1201,8 @@ function patchMaterial(material, samples) {
         'uniform sampler2D buffer;\nuniform float blurLod;\nuniform float glassSat;\nuniform float glassBright;\nuniform vec3 glassCenter;\nuniform float glassMinify;' +
           `\nuniform vec4 glassRipples[${MAX_RIPPLES}];\nuniform float glassRippleWave;\nuniform float glassRippleAmp;\nuniform vec2 glassPxUv;` +
           '\nuniform float glassLiveMinify;\nuniform vec2 glassHalf;\nuniform float glassRad;\nuniform vec2 glassTargetPx;\nuniform float glassLinear;' +
+          '\nuniform float glassCornerN;' + // squircle corners (GLSL_SQUIRCLE, used by glassSdRR)
+          GLSL_SQUIRCLE +
           GLSL_LIVE_MINIFY +
           GLSL_LINEAR
       )
@@ -1205,6 +1294,7 @@ function makeTintMaterial() {
       uLive: { value: 0 }, // canvas mode: light the rim like live (SVG) glass
       uBevel: { value: 12 },
       uLinear: { value: 0 }, // global.blend "linear": mix light + border in linear light
+      uCornerN: { value: 0 }, // "corners": "squircle" (0 = round)
     },
     vertexShader: /* glsl */ `
       #include <clipping_planes_pars_vertex>
@@ -1218,6 +1308,7 @@ function makeTintMaterial() {
     `,
     fragmentShader: /* glsl */ `
       #include <clipping_planes_pars_fragment>
+      uniform float uCornerN; // squircle corners → glassCornerN (GLSL_SHAPES)
       uniform vec3 uFrom, uVia, uTo;
       uniform float uHasVia, uAngle, uOpacity, uDebug;
       uniform vec2 uSize;
@@ -1230,6 +1321,7 @@ function makeTintMaterial() {
       ${GLSL_LINEAR}
       void main() {
         #include <clipping_planes_fragment>
+        glassCornerN = uCornerN; // squircle corners: every sdRoundRect below follows them
         // CSS linear-gradient angle: 0deg = towards the top, 90deg = right.
         vec2 dir = vec2(sin(uAngle), cos(uAngle));
         vec2 p = (vUv - 0.5) * uSize;
@@ -1293,6 +1385,7 @@ function makeShadowMaterial() {
       uBlur: { value: 0 },
       uOpacity: { value: 0 },
       uColor: { value: new THREE.Vector3(0, 0, 0) },
+      uCornerN: { value: 0 }, // "corners": "squircle" (0 = round)
     },
     vertexShader: /* glsl */ `
       #include <clipping_planes_pars_vertex>
@@ -1309,15 +1402,21 @@ function makeShadowMaterial() {
       uniform vec2 uSize, uHalf, uOffset;
       uniform float uRadius, uSpread, uBlur, uOpacity;
       uniform vec3 uColor;
+      uniform float uCornerN; // squircle corners → glassCornerN (GLSL_SHAPES)
       varying vec2 vUv;
       ${GLSL_SHAPES}
       ${GLSL_SHADOW}
       void main() {
         #include <clipping_planes_fragment>
+        glassCornerN = uCornerN;
         vec2 p = (vUv - 0.5) * uSize;
         // CSS box-shadow: the box moved by the offset, grown by the spread,
         // blurred by a Gaussian of σ = blur / 2.
         float a = uOpacity * glassBoxShadow(p - uOffset, max(uHalf + uSpread, vec2(0.0)), max(uRadius + uSpread, 0.0), uBlur * 0.5);
+        // Squircle corners: glassBoxShadow's closed form is for round corners
+        // only — use the Gaussian edge falloff of the squircle's own distance
+        // field instead (what morph glass uses for any melted shape).
+        if (glassCornerN > 2.0) a = uOpacity * glassEdgeShadow(sdRoundRect(p - uOffset, max(uHalf + uSpread, vec2(0.0)), max(uRadius + uSpread, 0.0)), uBlur * 0.5);
         // Like CSS box-shadow: nothing under the glass itself.
         a *= smoothstep(-0.5, 0.5, sdRoundRect(p, uHalf, uRadius));
         if (a <= 0.001) discard;
@@ -1360,6 +1459,7 @@ function makeStudioScene(theme) {
 /** live.js displacementMap's minify profile, in GLSL (inserted at global scope). */
 const GLSL_LIVE_MINIFY = /* glsl */ `
   float glassSdRR(vec2 p, vec2 b, float r) {
+    if (glassCornerN > 2.0) return glassSdSquircle(p, b, r, glassCornerN); // "corners": "squircle"
     r = min(r, min(b.x, b.y));
     vec2 q = abs(p) - b + r;
     return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
@@ -1448,9 +1548,39 @@ const GLSL_SHADOW = /* glsl */ `
   }
 `;
 
+// --- Shared GLSL: squircle corners ("corners": "squircle" — see rim.js) --------------------
+/**
+ * Signed distance (≈ px, ≤ 0 inside) to a box with SUPERELLIPSE corners
+ * |x/R|ⁿ + |y/R|ⁿ = 1, R = SQUIRCLE_EXTENT × r (capped at the half size) —
+ * the outline of shapes.js's squircle slabs. In a corner's square the
+ * distance is the n-norm one (exact on the outline itself), divided by its
+ * gradient's length so it reads in px near the edge, where the rim light,
+ * border and anti-aliasing need it; on the straight runs it is exact.
+ * Included once per shader (GLSL_SHAPES, and the transmission material's
+ * live-minify patch).
+ */
+const GLSL_SQUIRCLE = /* glsl */ `
+  float glassSdSquircle(vec2 p, vec2 b, float r, float n) {
+    float R = min(r * ${SQUIRCLE_EXTENT.toFixed(4)}, min(b.x, b.y));
+    vec2 q = abs(p) - b + R;
+    if (q.x > 0.0 && q.y > 0.0 && R > 0.01) {
+      vec2 m = q / R + 1e-6;
+      float L = pow(pow(m.x, n) + pow(m.y, n), 1.0 / n);
+      vec2 g = pow(m / L, vec2(n - 1.0)); // ∇ of the n-norm
+      return R * (L - 1.0) / max(length(g), 1e-4);
+    }
+    return max(q.x, q.y) - R;
+  }
+`;
+
 const GLSL_SHAPES = /* glsl */ `
+  // Squircle corners: set from a uniform at the top of main() (or per shape
+  // in the liquid shader). 0 = the plain rounded rectangle below.
+  float glassCornerN = 0.0;
+  ${GLSL_SQUIRCLE}
   // Signed distance to a rounded rectangle (half-size b, radius r): ≤ 0 inside.
   float sdRoundRect(vec2 p, vec2 b, float r) {
+    if (glassCornerN > 2.0) return glassSdSquircle(p, b, r, glassCornerN); // "corners": "squircle"
     vec2 q = abs(p) - b + r;
     return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
   }
@@ -1531,6 +1661,50 @@ function lightDir(deg) {
   return lightVec.set(Math.sin(a), Math.cos(a));
 }
 
+// --- Custom shapes in the liquid shader (1.5.2) --------------------------------------------
+/**
+ * A member's signed distance (≤ 0 inside), for field() and the per-shape
+ * weights: the exact rounded rectangle as before, or — uShape2[i].w =
+ * −(slot + 1) — a custom shape's distance-field texture (sdfShape.js).
+ * uShape2[i].w is SHARED with "corners": "squircle": ≥ 0 = the corner
+ * exponent (0 = round, see GLSL_SQUIRCLE), < 0 = a custom shape (which has
+ * no corners of its own). Merging the two 1.5.2 features: see glassMemberSd.
+ *   uSdfBox[slot].xy  the texture's half size in px (the shape's box + PAD)
+ *   uSdfBox[slot].zw  the box half size the field was made for
+ * The element's box can have changed since (a spring, a press grow — a new
+ * field follows once the size holds still): the field is stretched to the
+ * current box and its distances scaled by the smaller stretch, which keeps
+ * them a safe (never too large) estimate for the smooth minimum.
+ * Outside the texture the distance is extended by the straight line to its
+ * edge, so melting / shadows / the liquid mesh's padding keep working there.
+ * Samplers can't be indexed by a variable in GLSL ES, hence the if chain
+ * (explicit LOD 0: no derivatives needed inside the branches).
+ */
+const GLSL_CUSTOM_SHAPES = /* glsl */ `
+  float glassCustomSd(int slot, vec2 local, vec2 half_) {
+    vec4 box = uSdfBox[slot];
+    vec2 stretch = half_ / max(box.zw, vec2(1e-3));
+    vec2 q = local / stretch; // (in the field's own px)
+    // Field row 0 is its TOP (canvas), world y is up: v flipped.
+    vec2 uv = vec2(0.5 + q.x / (2.0 * box.x), 0.5 - q.y / (2.0 * box.y));
+    vec2 uvc = clamp(uv, vec2(0.0), vec2(1.0));
+    float d;
+    if (slot == 0) d = textureLod(uSdf0, uvc, 0.0).r;
+    else if (slot == 1) d = textureLod(uSdf1, uvc, 0.0).r;
+    else if (slot == 2) d = textureLod(uSdf2, uvc, 0.0).r;
+    else d = textureLod(uSdf3, uvc, 0.0).r;
+    d += length((uv - uvc) * 2.0 * box.xy);
+    return d * min(stretch.x, stretch.y);
+  }
+  float glassMemberSd(int i, vec2 p) {
+    // w < 0 → custom shape slot −w − 1; w ≥ 0 → rounded rect (w = corners).
+    int slot = uShape2[i].w < -0.5 ? int(-uShape2[i].w + 0.5) - 1 : -1;
+    vec2 local = p - uShapes[i].xy;
+    if (slot < 0) return sdRoundRect(local, uShapes[i].zw, uShape2[i].x);
+    return glassCustomSd(slot, local, uShapes[i].zw);
+  }
+`;
+
 // --- Liquid morph: one SDF glass surface for a whole morph group --------------------------
 /**
  * Draws every shape of a morph group as ONE smooth distance field (shapes
@@ -1551,7 +1725,7 @@ function makeLiquidMaterial() {
     toneMapped: false,
     uniforms: {
       uShapes: { value: Array.from({ length: MAX_LIQUID }, () => new THREE.Vector4()) }, // cx, cy, hw, hh
-      uShape2: { value: Array.from({ length: MAX_LIQUID }, () => new THREE.Vector4()) }, // r, tintOpacity, glow, 0
+      uShape2: { value: Array.from({ length: MAX_LIQUID }, () => new THREE.Vector4()) }, // r, tintOpacity, glow, corners (0 = round, 4 = squircle)
       uGlowAt: { value: Array.from({ length: MAX_LIQUID }, () => new THREE.Vector2()) },
       uTintCol: { value: Array.from({ length: MAX_LIQUID }, () => new THREE.Vector3(1, 1, 1)) },
       // Each shape's OWN look, blended between the shapes like the tint
@@ -1564,6 +1738,12 @@ function makeLiquidMaterial() {
       uCount: { value: 0 },
       uLinear: { value: 0 }, // global.blend "linear": every mix below in linear light
       uK: { value: 24 },
+      // Custom shapes (1.5.2): distance-field textures + where each sits.
+      uSdf0: { value: null },
+      uSdf1: { value: null },
+      uSdf2: { value: null },
+      uSdf3: { value: null },
+      uSdfBox: { value: Array.from({ length: MAX_SDF }, () => new THREE.Vector4(1, 1, 1, 1)) }, // texture half size, box half size it was made for
       uBevel: { value: 12 },
       uCA: { value: 0.05 },
       uRimWidth: { value: 1.25 },
@@ -1597,6 +1777,12 @@ function makeLiquidMaterial() {
       uniform vec2 uLight, uView;
       uniform float uViewTop;
       uniform sampler2D uBuffer;
+      // Custom shapes (1.5.2, see GLSL_CUSTOM_SHAPES)
+      uniform sampler2D uSdf0;
+      uniform sampler2D uSdf1;
+      uniform sampler2D uSdf2;
+      uniform sampler2D uSdf3;
+      uniform vec4 uSdfBox[${MAX_SDF}];
       varying vec2 vWorld;
       ${GLSL_SHAPES}
       ${GLSL_SHADOW}
@@ -1605,11 +1791,15 @@ function makeLiquidMaterial() {
         float h = max(k - abs(a - b), 0.0) / k;
         return min(a, b) - h * h * k * 0.25;
       }
+      ${GLSL_CUSTOM_SHAPES}
       float field(vec2 p) {
         float d = 1e6;
         for (int i = 0; i < MAXS; i++) {
           if (i >= uCount) break;
-          float di = sdRoundRect(p - uShapes[i].xy, uShapes[i].zw, uShape2[i].x);
+          // this shape's corners (squircle / round); a custom shape stores its
+          // texture slot as a NEGATIVE w, so clamp it away here (corners = round)
+          glassCornerN = max(uShape2[i].w, 0.0);
+          float di = glassMemberSd(i, p); // (1.5.2: rounded rect or custom shape)
           d = (i == 0) ? di : smin(d, di, max(uK, 0.001));
         }
         return d;
@@ -1633,7 +1823,10 @@ function makeLiquidMaterial() {
         vec4 bc = vec4(0.0); vec4 sc = vec4(0.0); vec4 sg = vec4(0.0);
         for (int i = 0; i < MAXS; i++) {
           if (i >= uCount) break;
-          float di = sdRoundRect(p - uShapes[i].xy, uShapes[i].zw, uShape2[i].x);
+          // this shape's corners (squircle / round); a custom shape stores its
+          // texture slot as a NEGATIVE w, so clamp it away here (corners = round)
+          glassCornerN = max(uShape2[i].w, 0.0);
+          float di = glassMemberSd(i, p); // (1.5.2: rounded rect or custom shape)
           float w = exp(-max(di, 0.0) * 3.0 / max(uK, 1.0));
           wsum += w;
           L3 += uShape3[i] * w;
@@ -1728,6 +1921,7 @@ function updateLiquid(l, members, size, viewTop = 0) {
   const u = l.mat.uniforms;
   const p = members[0].p; // the group's look comes from its first element
   const n = Math.min(members.length, MAX_LIQUID);
+  let sdfUsed = 0; // custom-shape texture slots taken (≤ MAX_SDF)
   let shadowPad = 0;
   let x0 = Infinity;
   let y0 = Infinity;
@@ -1736,7 +1930,19 @@ function updateLiquid(l, members, size, viewTop = 0) {
   for (let i = 0; i < n; i++) {
     const s = members[i].shape;
     u.uShapes.value[i].set(s.cx, s.cy, s.hw, s.hh);
-    u.uShape2.value[i].set(s.r, s.op, s.glow, 0);
+    // Custom shape: its texture goes in the next free slot, and uShape2.w =
+    // −(slot + 1) tells glassMemberSd to read it. Otherwise w = the squircle
+    // corner exponent (0 = round) — the two features share this one float.
+    let slot = 0;
+    const sdf = members[i].sdfTex;
+    if (sdf && sdfUsed < MAX_SDF) {
+      const f = members[i].sdfField;
+      u[`uSdf${sdfUsed}`].value = sdf.tex;
+      u.uSdfBox.value[sdfUsed].set(f.halfW, f.halfH, f.boxW / 2, f.boxH / 2);
+      sdfUsed += 1;
+      slot = sdfUsed;
+    }
+    u.uShape2.value[i].set(s.r, s.op, s.glow, slot ? -slot : s.cn || 0);
     u.uGlowAt.value[i].set(s.px, s.py);
     u.uTintCol.value[i].copy(s.tint);
     // This shape's own look (blended between shapes in the shader).
@@ -1756,15 +1962,19 @@ function updateLiquid(l, members, size, viewTop = 0) {
   }
   u.uCount.value = n;
   u.uLinear.value = blendLinear() ? 1 : 0;
-  u.uK.value = p.morphRadius;
+  // Melt reach: the morph radius, or a glass group's 2 × spacing (meltK).
+  const meltK = members[0].meltK ?? p.morphRadius;
+  u.uK.value = meltK;
   u.uBevel.value = p.bevel;
   u.uCA.value = p.chromaticAberration * 3;
   u.uRimWidth.value = p.rimWidth;
-  u.uLight.value.copy(lightDir(p.lightAngle));
+  // lightFollow: one light for the melted group, aimed from the box round
+  // all its shapes (shape centres are client px, y up — hence the −y).
+  u.uLight.value.copy(lightDir(followLightAngle(p.lightAngle, p.lightFollow, p.lightFollowAmount, { left: x0, top: -y1, width: x1 - x0, height: y1 - y0 })));
   u.uView.value.set(size.width, size.height);
   u.uViewTop.value = viewTop;
   // Cover all shapes plus the reach of the melt and of the drop shadows.
-  const pad = p.morphRadius + 4 + shadowPad;
+  const pad = meltK + 4 + shadowPad;
   l.mesh.scale.set(x1 - x0 + pad * 2, y1 - y0 + pad * 2, 1);
   l.mesh.position.set((x0 + x1) / 2, (y0 + y1) / 2, 2);
   l.mesh.layers.set(members[0].channel);

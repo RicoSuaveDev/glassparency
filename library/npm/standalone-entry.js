@@ -7,6 +7,8 @@
  * window.Glassparency. It starts by itself as soon as it loads, with
  * window.GlassparencyConfig (if set) as the config — unless the <script>
  * tag has a data-manual attribute; then call Glassparency.start() yourself.
+ * data-no-classes on the tag turns the CSS class detection off (.glass,
+ * .glass-frosted… — see ../standalone.js).
  * The API itself is in ../standalone.js.
  * =============================================================================
  */
@@ -17,6 +19,10 @@ export * from '../standalone';
 if (typeof document !== 'undefined') {
   const script = document.currentScript; // (only set while a classic script runs)
   if (!script || !script.hasAttribute('data-manual')) {
-    start({ config: typeof window !== 'undefined' ? window.GlassparencyConfig : undefined });
+    start({
+      config: typeof window !== 'undefined' ? window.GlassparencyConfig : undefined,
+      // data-no-classes on the <script> tag: attributes only (no .glass / .glass-frosted… class detection)
+      ...(script?.hasAttribute('data-no-classes') ? { classes: false } : {}),
+    });
   }
 }

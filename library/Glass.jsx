@@ -8,6 +8,12 @@
  *   as        element or component to render (default "div")
  *   group     config group in glass.config.json (default "panel")
  *   glass     per-element overrides of any glass property
+ *   look      this element's look — "clear" | "frosted" | "tinted" | "smoke"
+ *             ("none" = no look even when the page has one; see config.js
+ *             "Looks"); lookColor = the tinted look's colour
+ *   shape     optional outline: a named shape ("capsule"…) or a custom one —
+ *             { path: 'M…', viewBox? }, { svg: 'child' } (the <svg> icon
+ *             inside), { svg: '<svg…>' } or { text: true } (sdfShape.js)
  *   icon      optional icon drawn before the children: a React element
  *             (<svg>…</svg>, <MyIcon/>), or an icon NAME — names are drawn by
  *             the renderIcon function given to <GlassProvider renderIcon>
@@ -24,9 +30,22 @@ import { forwardRef, useCallback, useRef } from 'react';
 import { useGlass } from './useGlass';
 import { getIconRenderer } from './registry';
 
-const Glass = forwardRef(function Glass({ as: Tag = 'div', group = 'panel', glass, icon, iconSize = 16, children, ...rest }, forwarded) {
+const Glass = forwardRef(function Glass({ as: Tag = 'div', group = 'panel', glass, look, lookColor, shape, icon, iconSize = 16, children, ...rest }, forwarded) {
   const ref = useRef(null);
-  useGlass(ref, group, glass);
+  // look / lookColor / shape are glass props like any other (config.js reads
+  // them), passed separately here only so <Glass look="frosted"> and
+  // <Glass shape={{ path }}> read naturally. They override the same keys in
+  // `glass`. (useGlass compares props by value, so the new object each render
+  // is fine.)
+  //   look      the element's look (config.js "Looks"); lookColor its colour
+  //   shape     a custom outline ({ path }, { svg }, { text } — sdfShape.js)
+  //             or a named one
+  const extra = {
+    ...(look !== undefined ? { look } : {}),
+    ...(lookColor !== undefined ? { lookColor } : {}),
+    ...(shape !== undefined ? { shape } : {}),
+  };
+  useGlass(ref, group, Object.keys(extra).length === 0 ? glass : { ...(glass || {}), ...extra });
   // Keep our ref and the caller's ref both pointing at the element.
   const setRef = useCallback(
     (node) => {

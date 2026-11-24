@@ -32,6 +32,7 @@
  * =============================================================================
  */
 import rawConfig from './glass.config.json';
+import { isCustomShape, normalizeShape } from './sdfShape';
 
 // --- What each property may be --------------------------------------------------
 // type: 'number' (with min/max), 'enum' (one of values), 'color' (#hex or
@@ -54,6 +55,11 @@ export const SCHEMA = {
   shape: { type: 'enum', values: ['rectangle', 'roundedRectangle', 'circle', 'capsule'], default: 'roundedRectangle', label: 'Shape', section: 'Shape' },
   // auto = the element's CSS corner radius (16px if its corners are square).
   radius: { type: 'radius', min: 0, max: 200, step: 1, label: 'Corner radius (px, or auto)', section: 'Shape' },
+  // The OUTLINE's corners (profile below only shapes the rim's lens curve):
+  // round = quarter circles (CSS border-radius); squircle = Apple-style
+  // continuous-curvature corners (a superellipse, n = 4, bending over 1.6 ×
+  // the radius — rim.js). Rounded rectangles only; circles / capsules stay round.
+  corners: { type: 'enum', values: ['round', 'squircle'], default: 'round', label: 'Corners', section: 'Shape' },
   scale: { type: 'size', min: 0.5, max: 1.5, step: 0.01, label: 'Scale X / Y', section: 'Shape' },
   // Hide the rim on some sides: the slab is extended past the element by this
   // many px and cut off at the element's edge (for full-width bars).
@@ -93,6 +99,13 @@ export const SCHEMA = {
   rimLight: { type: 'number', min: 0, max: 1, step: 0.01, label: 'Rim highlight', section: 'Light' },
   rimWidth: { type: 'number', min: 0.5, max: 8, step: 0.25, label: 'Rim highlight width (px)', section: 'Light' },
   lightAngle: { type: 'number', min: -180, max: 180, step: 1, label: 'Light direction (deg, −45 = top-left)', section: 'Light' },
+  // Pointer / tilt highlight (lightFollow.js — OPT-IN): the rim light turns
+  // towards the mouse pointer ("pointer") or follows how the phone is tilted
+  // ("tilt" — iOS needs enableTiltHighlight() from a tap first); "auto" =
+  // pointer on devices with a mouse, tilt on touch screens. Sprung, and off
+  // with prefers-reduced-motion. lightFollowAmount: how far it turns (0–1).
+  lightFollow: { type: 'enum', values: ['off', 'auto', 'pointer', 'tilt'], default: 'off', label: 'Light follows pointer / tilt', section: 'Light' },
+  lightFollowAmount: { type: 'number', min: 0, max: 1, step: 0.01, label: 'Light follow amount', section: 'Light' },
   innerGlow: { type: 'number', min: 0, max: 1, step: 0.01, label: 'Inner glow', section: 'Light' },
   // Press: the control grows a little and lights up from where it's touched.
   pressScale: { type: 'number', min: 0.8, max: 1.2, step: 0.005, label: 'Grow when pressed', section: 'Light' },
@@ -194,6 +207,248 @@ const STYLES = {
     return { ...p, tintOpacity: Math.max(o, dark ? 0.7 : 0.62), blur: Math.max(Number(p.blur), 24) };
   },
 };
+
+// --- Looks: ready-made themes for the WHOLE page (or one element) ----------------
+/**
+ * A LOOK is a ready-made theme — "clear", "frosted", "tinted", "smoke" (dark
+ * smoke) — applied in one line:
+ *   applyGlassLook('frosted')                 every glass on the page
+ *   applyGlassLook('tinted', { color: '#ff2d55' })
+ *   <GlassProvider look="frosted">            (React, the same store)
+ *   <Glass group="card" look="smoke">          one element (any props: { look: 'smoke' })
+ *   "global": { "look": "frosted" }           in a config (configureGlass / glass.config.json)
+ *   data-glassparency-look="frosted"          script build: on an element, or on <html> / <body>
+ *
+ * How it works: like the styles above, a look is a set of RULES applied to a
+ * group's own resolved values (so it works on every group — built-in, preset
+ * packs, a site's own — without writing each one out). It runs after the
+ * style and the hover / pressed / disabled blocks, so the controls' states
+ * keep working under any look.
+ *
+ * Which look an element gets (first match wins):
+ *   1. a "look" key in its own props, its group or "defaults" (config) —
+ *      "none" / "default" = no look for that element, whatever the page uses;
+ *   2. the page look set by applyGlassLook() / <GlassProvider look>;
+ *   3. "global.look" in the config.
+ *
+ * A look leaves three kinds of parts alone (as the styles do):
+ *   - "solid" parts (tintOpacity ≥ 0.98: switch knobs, a radio's dot) —
+ *     paint, not glass;
+ *   - "accent" parts (≥ 0.8: a checked box, a primary button) keep their
+ *     colour (only clear / frosted soften or frost them a little);
+ *   - mid-grey "track" parts (a slider's track, a tab bar's lens) keep their
+ *     grey — only page SURFACES (white / near-black / unknown tints: cards,
+ *     panels, bars, menus…) are recoloured by tinted / smoke.
+ *
+ * Custom looks (or fine-tuning a built-in one) go in the config's "looks"
+ * block — same format as every other block, so preset packs
+ * (addGlassPresets) can ship looks too:
+ *   "looks": {
+ *     "frosted": { "blur": 32 },                         ← fine-tune a built-in look
+ *     "brand":   { "base": "tinted", "color": "#7c3aed",   ← a new look built on one
+ *                  "rimLight": 0.8, "dark": { "tintOpacity": 0.4 } }
+ *   }
+ * The block's props are merged over the look's rules for every glass
+ * (surface / track / accent) part — never solid ones; "dark" holds what
+ * changes in dark mode; "base" names the built-in rules to start from (none
+ * = only the props); "color" is the tinted look's colour.
+ */
+export const LOOK_NAMES = ['clear', 'frosted', 'tinted', 'smoke'];
+/** The tinted look's colour when none is given (a calm periwinkle blue). */
+export const DEFAULT_LOOK_COLOR = '#5b7cfa';
+// "Dark smoke" is the look's full name; "dark-smoke" / "darkSmoke" are accepted too.
+const LOOK_ALIASES = { 'dark-smoke': 'smoke', darkSmoke: 'smoke', darksmoke: 'smoke' };
+const NO_LOOK = new Set(['none', 'default', 'off']);
+/** A look name as written by a site → the name used here ('' = no look). */
+const lookName = (v) => {
+  if (typeof v !== 'string') return '';
+  const s = v.trim();
+  if (!s || NO_LOOK.has(s)) return '';
+  return LOOK_ALIASES[s] || s;
+};
+// The page look set at runtime (applyGlassLook / <GlassProvider look>):
+// { name, color } or null. REPLACED (never mutated), like the config — the
+// resolve cache below watches it by identity.
+let pageLook = null;
+
+/** "#rgb" / "#rrggbb" / a few colour words → [r, g, b] (0–255), or null (var(), rgb(), gradients…). */
+const NAMED = { white: [255, 255, 255], black: [0, 0, 0], gray: [128, 128, 128], grey: [128, 128, 128], silver: [192, 192, 192] };
+function hexRgb(v) {
+  if (typeof v !== 'string') return null;
+  const s = v.trim().toLowerCase();
+  if (NAMED[s]) return NAMED[s];
+  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/.exec(s);
+  if (!m) return null;
+  const h = m[1].length === 3 ? m[1].replace(/./g, '$&$&') : m[1];
+  return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
+}
+/**
+ * What kind of part a (merged, unvalidated) look is, for the look rules:
+ *   'solid'   tintOpacity ≥ 0.98 (paint — never changed)
+ *   'accent'  ≥ 0.8 (coloured on purpose — keeps its colour)
+ *   'track'   a mid-grey tint (luma 0.3–0.7: slider tracks, lenses) — keeps its grey
+ *   'colour'  a clearly coloured hex tint (a blue "liquid" chip…) — keeps its colour
+ *   'surface' everything else: white / near-black / CSS-variable / gradient
+ *             tints — the page's cards, panels, bars, menus. Looks recolour these.
+ */
+function partKind(p) {
+  const o = Number(p.tintOpacity);
+  if (o >= SOLID) return 'solid';
+  if (o >= ACCENT) return 'accent';
+  const t = p.tint;
+  const rgb = hexRgb(typeof t === 'string' ? t : t && typeof t === 'object' && t.from === t.to ? t.from : null);
+  if (!rgb) return 'surface'; // (var(), rgb(), a real gradient: can't tell — treat as a surface)
+  const spread = Math.max(...rgb) - Math.min(...rgb);
+  if (spread > 40) return 'colour';
+  const luma = (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255;
+  return luma > 0.3 && luma < 0.7 ? 'track' : 'surface';
+}
+
+/**
+ * The built-in looks, as rules on a group's resolved values:
+ * (p = merged props, dark = dark theme?, color = the tinted look's colour).
+ * Only keys the animated controls blend (controls.js BLEND_KEYS) and the tint
+ * are changed, so a switch's knob or a tab bar's lens shows the look in
+ * every frame of its animation too. Tuned by eye in Chrome over a photo and
+ * over a flat page, light and dark.
+ */
+const LOOK_RULES = {
+  // Clear: barely-there glass — almost no tint or frost, a strong lens and a
+  // bright rim (iOS 26's "Clear" Liquid Glass). The page shows through.
+  clear(p, dark, _c, kind) {
+    const o = Number(p.tintOpacity);
+    if (kind === 'accent') return { ...p, tintOpacity: o * 0.72, blur: Math.min(Number(p.blur), 2), rimLight: Math.max(Number(p.rimLight), 0.7) };
+    if (kind === 'track') return { ...p, tintOpacity: o * 0.6, blur: Math.min(Number(p.blur), 1) };
+    return {
+      ...p,
+      tintOpacity: Math.min(o * 0.3, dark ? 0.14 : 0.1),
+      blur: Math.min(Number(p.blur), 1),
+      thickness: Number(p.thickness) * 1.25,
+      ior: Math.max(Number(p.ior), 1.38),
+      // (a hint of colour fringe at the rim; more turned all text behind it into rainbows)
+      chromaticAberration: clamp(Number(p.chromaticAberration), 0.015, 0.03),
+      rimLight: Math.max(Number(p.rimLight), 0.85),
+      saturation: Math.min(Number(p.saturation), 1.2),
+      brightness: dark ? Number(p.brightness) : Math.max(Number(p.brightness), 1.05),
+      innerGlow: Math.min(Number(p.innerGlow), 0.1),
+      borderOpacity: Math.max(Number(p.borderOpacity), 0.55),
+      shadowOpacity: Number(p.shadowOpacity) * 0.5,
+    };
+  },
+  // Frosted: milky, heavily frosted glass in the group's own tint (Apple
+  // Music's sidebar, macOS menus) — what's behind becomes soft colour only.
+  frosted(p, dark, _c, kind) {
+    if (kind === 'accent' || kind === 'colour') return { ...p, blur: Math.max(Number(p.blur), 16) };
+    if (kind === 'track') return { ...p, blur: Math.max(Number(p.blur), 8) };
+    return {
+      ...p,
+      tintOpacity: Math.max(Number(p.tintOpacity), dark ? 0.62 : 0.56),
+      blur: Math.max(Number(p.blur), 28),
+      saturation: Math.max(Number(p.saturation), 1.8),
+      brightness: dark ? Math.min(Number(p.brightness), 1) : Math.max(Number(p.brightness), 1.06),
+      thickness: Number(p.thickness) * 0.8,
+      chromaticAberration: 0,
+      innerGlow: Math.max(Number(p.innerGlow), 0.28),
+      borderOpacity: Math.max(Number(p.borderOpacity), 0.5),
+      shadowOpacity: Math.max(Number(p.shadowOpacity), 0.14),
+    };
+  },
+  // Tinted: coloured glass — every surface takes one colour (applyGlassLook
+  // 'tinted', { color }), lightly, with the page's colours boosted through it.
+  tinted(p, dark, color, kind) {
+    if (kind !== 'surface') return p;
+    return {
+      ...p,
+      tint: color,
+      tintOpacity: dark ? 0.38 : 0.26,
+      blur: clamp(Number(p.blur), 8, 20),
+      saturation: Math.max(Number(p.saturation), 1.9),
+      rimLight: Math.max(Number(p.rimLight), 0.65),
+      innerGlow: Math.max(Number(p.innerGlow), 0.22),
+      borderOpacity: Math.max(Number(p.borderOpacity), 0.5),
+      shadowOpacity: Math.max(Number(p.shadowOpacity), 0.16),
+    };
+  },
+  // Dark smoke: smoked, near-black glass that darkens what's behind it (the
+  // auto text colour turns light by itself: autoText.js mixes the tint in).
+  smoke(p, dark, _c, kind) {
+    if (kind !== 'surface') return p;
+    return {
+      ...p,
+      tint: dark ? '#0c0c10' : '#1b1b21',
+      tintOpacity: dark ? 0.6 : 0.56,
+      blur: Math.max(Number(p.blur), 14),
+      brightness: Math.min(Number(p.brightness), dark ? 0.78 : 0.82),
+      saturation: clamp(Number(p.saturation), 1.1, 1.4),
+      rimLight: Math.max(Number(p.rimLight), 0.45),
+      innerGlow: Math.min(Number(p.innerGlow), 0.08),
+      borderOpacity: Math.min(Number(p.borderOpacity), 0.28),
+      shadowOpacity: Math.max(Number(p.shadowOpacity), 0.28),
+    };
+  },
+};
+
+/**
+ * Set the look of every glass on the page (see "Looks" above).
+ *   applyGlassLook('frosted');  applyGlassLook('tinted', { color: '#ff2d55' });  applyGlassLook(null)
+ * null / "none" = back to the config's global.look (if any) — no look.
+ * Elements (or groups) with their own "look" keep theirs.
+ * @param {string|null} name   "clear" | "frosted" | "tinted" | "smoke" (or "dark-smoke"), or a "looks" name from the config
+ * @param {{ color?: string }} [options]   color: the tinted look's colour (any CSS colour)
+ * @param {{ silent?: boolean }} [internal] (GlassProvider: notify later, in an effect)
+ * @returns {() => void} put the previous page look back
+ */
+export function applyGlassLook(name, options = {}, { silent = false } = {}) {
+  const prev = pageLook;
+  const n = lookName(name);
+  const color = options && typeof options.color === 'string' && options.color.trim() ? options.color.trim() : null;
+  const next = n ? { name: n, color } : null;
+  if (n && !LOOK_RULES[n] && !fileConfig.looks?.[n]) warnOnce(`look:${n}`, `glass: unknown look "${n}" — the built-in looks are ${LOOK_NAMES.join(', ')} (or add it to the config's "looks")`);
+  if (next?.name !== prev?.name || next?.color !== prev?.color) {
+    pageLook = next;
+    if (!silent) changed();
+  }
+  return () => applyGlassLook(prev?.name ?? null, { color: prev?.color ?? undefined });
+}
+/** The page look in use ({ name, color }) — applyGlassLook's, else the config's global.look — or null. */
+export function getGlassLook() {
+  if (pageLook) return { name: pageLook.name, color: pageLook.color || lookColorOf(pageLook.name, null) };
+  const n = lookName(fileConfig.global?.look);
+  return n ? { name: n, color: lookColorOf(n, null) } : null;
+}
+/** The tinted colour for look `name`: the element's own, the page look's, the config's, else the default. */
+function lookColorOf(name, own) {
+  if (typeof own === 'string' && own.trim()) return own.trim();
+  if (pageLook?.name === name && pageLook.color) return pageLook.color;
+  const def = fileConfig.looks?.[name];
+  if (typeof def?.color === 'string' && def.color.trim()) return def.color.trim();
+  const g = fileConfig.global?.lookColor;
+  return typeof g === 'string' && g.trim() ? g.trim() : DEFAULT_LOOK_COLOR;
+}
+/** A merged (unvalidated) look with its look applied, if it has one (see "Looks"). */
+function withLook(merged) {
+  // The element's / group's own "look" wins (even "none"), then the page look.
+  const own = merged.look;
+  const name = own !== undefined && own !== null ? lookName(own) : pageLook ? pageLook.name : lookName(fileConfig.global?.look);
+  if (!name) return merged;
+  const def = isPlainObject(fileConfig.looks?.[name]) ? fileConfig.looks[name] : null;
+  const rule = LOOK_RULES[def && typeof def.base === 'string' ? lookName(def.base) : name];
+  if (!rule && !def) {
+    warnOnce(`look:${name}`, `glass: unknown look "${name}" — using no look`);
+    return merged;
+  }
+  const kind = partKind(merged);
+  if (kind === 'solid') return merged; // (paint, not glass)
+  const dark = theme === 'dark';
+  let out = rule ? rule(merged, dark, lookColorOf(name, merged.lookColor), kind) : merged;
+  if (def) {
+    // The config's fine-tuning: its props (not base / color / dark) for every glass part.
+    const { base: _b, color: _c, dark: darkBlock, ...tune } = def;
+    out = mergeProps(out, tune);
+    if (dark && isPlainObject(darkBlock)) out = mergeProps(out, darkBlock);
+  }
+  return out;
+}
 
 // --- Config store (the JSON + runtime overrides) --------------------------------
 let builtInConfig = rawConfig; // glass.config.json (hot-reloaded in dev)
@@ -329,6 +584,12 @@ function buildGlobal() {
     // "auto" = full quality, throttled only while animation is too slow
     // (quality.js); "high" / "medium" / "low" = always that level.
     quality: ['auto', 'high', 'medium', 'low'].includes(g.quality) ? g.quality : 'auto',
+    // Saving power (power.js): true (default) = draw nothing while the tab
+    // is hidden, and animate like "Reduce motion" while the battery is low
+    // and unplugged (Battery Status API, where the browser has it).
+    // false = always draw / animate in full. (The system "Reduce motion"
+    // setting is followed either way.)
+    powerSaving: g.powerSaving !== false,
     // WebGL frost: "smooth" (default) — the buffer's mip levels are rebuilt
     // with a dual-Kawase downsample (soft, Gaussian-like, steady while the
     // page moves); "mip" — the GPU's own box-filtered mipmaps (the old look:
@@ -548,7 +809,7 @@ function mergeConfig(base, extra) {
 // re-render, the animated controls every frame). The result only depends on:
 // group, the per-element props (by value), the hover / pressed / disabled
 // booleans, and the config "world" — fileConfig, overrides, forcedStates and
-// the theme, which are all REPLACED (never mutated) when they change. So
+// the theme (and the page look), which are all REPLACED (never mutated) when they change. So
 // results are cached by (group, state, props-as-JSON) and the whole cache is
 // dropped the moment any part of the world is a new object. Callers must
 // treat the result as read-only (none of them write to it).
@@ -567,9 +828,9 @@ function resolveCacheKey(group, props, state) {
 }
 export function resolveGlass(group, props = {}, state = {}) {
   const w = resolveWorld;
-  if (w.fileConfig !== fileConfig || w.overrides !== overrides || w.forcedStates !== forcedStates || w.theme !== theme || w.canvasMode !== canvasMode) {
+  if (w.fileConfig !== fileConfig || w.overrides !== overrides || w.forcedStates !== forcedStates || w.theme !== theme || w.canvasMode !== canvasMode || w.pageLook !== pageLook) {
     resolveCache.clear();
-    resolveWorld = { fileConfig, overrides, forcedStates, theme, canvasMode };
+    resolveWorld = { fileConfig, overrides, forcedStates, theme, canvasMode, pageLook };
   }
   const key = resolveCacheKey(group, props, state);
   if (key !== null) {
@@ -605,6 +866,9 @@ function resolveGlassUncached(group, props = {}, state = {}) {
     merged = STYLES[style](merged, theme === 'dark');
     for (const l of layers) if (l[style]) merged = mergeProps(merged, l[style]);
   }
+  // Look (clear / frosted / tinted / smoke — see "Looks" above): after the
+  // style, so a look is the last word on a part's glass (canvas mode aside).
+  merged = withLook(merged);
   // Canvas mode only: each layer's "canvas" block, last (see setCanvasMode).
   if (canvasMode) for (const l of layers) if (l[CANVAS_KEY]) merged = mergeProps(merged, l[CANVAS_KEY]);
   return validate(merged, group);
@@ -665,7 +929,10 @@ function validate(p, group) {
         break;
       }
       case 'enum':
-        if (rule.values.includes(v)) out[key] = v;
+        // Custom shapes (sdfShape.js): shape: { path } / { svg } / { text }
+        // → shape "custom" + the shape itself as customShape (below).
+        if (key === 'shape' && isCustomShape(v)) out[key] = 'custom';
+        else if (rule.values.includes(v)) out[key] = v;
         else {
           if (v !== undefined) bad(`should be one of ${rule.values.join(', ')}`);
           out[key] = rule.default ?? rule.values[0];
@@ -712,6 +979,9 @@ function validate(p, group) {
         out[key] = v;
     }
   }
+  // Not a SCHEMA setting of its own: the custom outline behind shape "custom"
+  // (null for the named shapes) — GlassCanvas draws it from a distance field.
+  out.customShape = out.shape === 'custom' ? normalizeShape(p.shape) : null;
   return out;
 }
 

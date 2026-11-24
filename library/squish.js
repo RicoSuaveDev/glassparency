@@ -32,7 +32,8 @@
  */
 import { requestRender } from './registry';
 
-const reducedMotion = () => typeof window !== 'undefined' && Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
+// (The OS "Reduce motion" setting, or a low unplugged battery — power.js.)
+import { reducedMotion } from './power';
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 
 // Spring stiffness (1/s²). Higher = snappier. Damping comes from squishBounce:

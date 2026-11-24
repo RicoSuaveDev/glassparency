@@ -43,11 +43,36 @@
  *   <div id="details" data-glassparency-sheet data-glassparency-detents="0.4,0.9" hidden>…</div>
  *   <button data-glassparency-open="details">Details</button>   (opens a sheet, popover or menu by id)
  *   Glassparency.toast({ title: 'Saved', body: '…' })
+ *   <div data-glassparency-scroll-edge="top soft" data-glassparency-scroll-edge-inset="56">…</div>
+ *                              scroll edge effect on a scroll container (scrollEdge.js)
+ * Glass that melts together (1.5.2): the glass INSIDE a marked container is
+ * one liquid surface; pieces closer than the spacing (px) melt into a blob:
+ *   <div data-glassparency-group="24"><button data-glassparency="iconButton">…</button>…</div>
+ * Custom shapes (1.5.2) are ordinary props:
+ *   <div data-glassparency="panel" data-glassparency-props='{"shape":{"path":"M12 2…","viewBox":"0 0 24 24"}}'></div>
+ *   <button data-glassparency="iconButton" data-glassparency-props='{"shape":{"svg":"child"}}'><svg…/></button>
+ *   <h1 data-glassparency="panel" data-glassparency-props='{"shape":{"text":true}}'>Liquid</h1>
  * A popover / menu / select panel's look: data-glassparency-panel-props='{…}'
  * on its button (data-glassparency-props there is the button's own glass).
  * Settings: window.GlassparencyConfig = {…} before the script, or
  * Glassparency.configure({…}) any time (same format as glass.config.json;
  * merged over the built-in presets).
+ * Looks (ready-made themes — config.js "Looks"): clear, frosted, tinted, smoke:
+ *   <html data-glassparency-look="frosted">          the whole page
+ *   <div data-glassparency="card" data-glassparency-look="smoke">   one element
+ *   data-glassparency-look-color="#ff2d55"           the tinted look's colour
+ *   Glassparency.applyLook('tinted', { color: '#ff2d55' })   from JavaScript
+ * (data-glassparency-look alone also gives an element glass, group "panel".)
+ * CSS classes (the Tailwind plugin, "glassparency/tailwind", makes these —
+ * any stylesheet may use them): an element with one of them gets glass, the
+ * same as the attributes above (the attributes win where both are set):
+ *   class="glass"                       glass, group "panel"
+ *   class="glass-frosted" (-clear, -tinted, -smoke)   glass with that look
+ *   class="glass-group-card"            the group ("glass-group-[myGroup]" too)
+ *   --glassparency-look-color: …        (CSS) the tinted look's colour
+ *                                       (Tailwind: glass-tint-rose-500)
+ * Turn class detection off with start({ classes: false }) (or a
+ * data-no-classes attribute on the <script> tag).
  *
  * JavaScript API (window.Glassparency in the script build). Every function
  * also has the module's name — attachGlass, setGlassProps, getGlassProps,
@@ -55,7 +80,9 @@
  * getGlassConfig, requestGlassRender, getGlassStatus / subscribeGlassStatus,
  * getGlassQuality / subscribeGlassQuality, GLASS_VERSION — the short names
  * below are aliases of those:
- *   start({ config, auto = true, injectStyles = true, nonce })   begin
+ *   start({ config, auto = true, classes = true, look, provider = true, injectStyles = true, nonce })   begin
+ *                              look: the page look (as applyLook); provider: false =
+ *                              only attach (a React app that renders <GlassProvider> itself)
  *   stop()                                                       remove all glass
  *   attach(el, group, props) → { setProps(props), destroy() }    by hand
  *   setProps(el, props)        change an element's look without re-attaching
@@ -71,16 +98,20 @@
  *   createSquish(el, readCfg)  squish & stretch for anything you move yourself
  *   createShapeSpring(el, opts)  spring an element between shapes (motion.js)
  *   glassMorph(from, to, opts) liquid-morph one element into another (motion.js)
+ *   createGlassGroup(el, { spacing }) → { setSpacing(px), destroy() }   glass that melts (blendGroup.js)
  *   getProps(el) / mergeProps(el, partial)   read / change SOME per-element props
  *   <glass-ui group="card" props='{…}'>  glass as an element (element.js),
  *                              registered by start(); defineElement(name) by hand
  *   configure(config)          merge a config over the built-in one
+ *   applyLook(name, { color }) → undo()   the page look (null = none); getLook(); LOOKS
  *   addPresets(config) → remove()   extra groups under configure() (kept by it)
  *   getConfig()                the config in use
  *   requestRender()            redraw now (after moving elements yourself)
  *   reserveSnapshotArea(key, rect | null)
  *   status() / onStatus(fn)    'loading' | 'on' | 'fallback' (+ reason)
  *   quality() / onQuality(fn)  { level: 'high' | 'medium' | 'low', auto, fps }
+ *   power() / onPower(fn)      { enabled, hidden, reducedMotion, lowBattery } (power.js)
+ *   loseGlassContext(opts)     test: lose + restore every glass canvas's WebGL context
  *   version                    the package version
  * =============================================================================
  */
@@ -91,7 +122,9 @@ import { attachGlass, getGlassProps, mergeGlassProps, setGlassProps } from './us
 import { createShapeSpring, glassMorph } from './motion';
 import { defineGlassElement } from './element';
 import { getGlassQuality, subscribeGlassQuality } from './quality';
-import { addGlassPresets, configureGlass, getGlassConfig } from './config';
+import { getGlassPower, subscribeGlassPower } from './power';
+import { loseGlassContext } from './devtools';
+import { addGlassPresets, applyGlassLook, configureGlass, getGlassConfig, getGlassLook, LOOK_NAMES } from './config';
 import { getStatus, requestRender as requestGlassRender, subscribeStatus } from './registry';
 import { reserveSnapshotArea as reserveArea } from './snapshot';
 import { createSlider, createSwitch } from './controls';
@@ -99,10 +132,23 @@ import { createCheckbox, createProgress, createRadio, createSidebar, createTabBa
 import { createSquish } from './squish';
 import { createBlockSlider, createRangeSlider, createSegmented, createStepper } from './pickers';
 import { createMenu, createPopover, createSelect, createSheet, createToaster, createTooltip, getGlassOverlay } from './overlays';
+import { createScrollEdge } from './scrollEdge';
+import { enableTiltHighlight } from './lightFollow';
+import { createGlassGroup } from './blendGroup';
 
 /** Declarative attributes. */
 const ATTR = 'data-glassparency';
 const PROPS_ATTR = 'data-glassparency-props';
+// Looks (config.js "Looks"): on a glass element = its look; on <html> /
+// <body> = the page look. The colour is the tinted look's.
+const LOOK_ATTR = 'data-glassparency-look';
+const LOOK_COLOR_ATTR = 'data-glassparency-look-color';
+// CSS classes that mean "glass here" (the Tailwind plugin's; see the header).
+// A look class implies glass, like the plain "glass" class.
+const LOOK_CLASSES = { 'glass-clear': 'clear', 'glass-frosted': 'frosted', 'glass-tinted': 'tinted', 'glass-smoke': 'smoke' };
+const GROUP_CLASS = 'glass-group-'; // glass-group-card, glass-group-[myGroup]
+const CLASS_SEL = ['.glass', ...Object.keys(LOOK_CLASSES).map((c) => `.${c}`), `[class*="${GROUP_CLASS}"]`].join(', ');
+const LOOK_COLOR_VAR = '--glassparency-look-color';
 const SWITCH_ATTR = 'data-glassparency-switch'; // on <input type="checkbox">
 const SLIDER_ATTR = 'data-glassparency-slider'; // on <input type="range">
 const CONTROLS = `input[${SWITCH_ATTR}], input[${SLIDER_ATTR}]`;
@@ -124,8 +170,11 @@ const W = {
   menu: { attr: 'data-glassparency-menu', sel: '*' },
   tooltip: { attr: 'data-glassparency-tooltip', sel: '*' },
   sheet: { attr: 'data-glassparency-sheet', sel: '*' },
+  // Scroll edge effect on a scroll container (scrollEdge.js): "top" | "bottom" | "both" [+ "soft" | "hard"].
+  scrolledge: { attr: 'data-glassparency-scroll-edge', sel: '*' },
 };
 const PANEL_PROPS_ATTR = 'data-glassparency-panel-props'; // a popover / menu / select panel's look
+const GROUP_ATTR = 'data-glassparency-group'; // a glass group container: spacing in px (blendGroup.js)
 const OPEN_ATTR = 'data-glassparency-open'; // a button that opens a sheet / popover / menu by id
 const WIDGETS = Object.values(W)
   .map((w) => (w.sel === '*' ? `[${w.attr}]` : `${w.sel}[${w.attr}]`))
@@ -135,8 +184,11 @@ const widgets = new Map(); // element → { kind, ctl, off } (glass checkboxes, 
 let reactRoot = null; // the React root running <GlassProvider>
 let container = null; // its (empty) element in <body>
 let observer = null; // watches the page for data-glassparency elements
+let classes = true; // also detect the glass CSS classes (start({ classes: false }) = attributes only)
+let pageLookUndo = null; // set while <html> / <body> data-glassparency-look sets the page look
 const auto = new Map(); // element → { group, raw, handle } (declarative glass)
 const inputs = new Map(); // native input → { widget, ctl, off } (glass switches / sliders)
+const groups = new Map(); // container → createGlassGroup handle (data-glassparency-group)
 
 /**
  * Start the glass on this page (safe to call more than once).
@@ -145,12 +197,21 @@ const inputs = new Map(); // native input → { widget, ctl, off } (glass switch
 export function start(options = {}) {
   if (typeof document === 'undefined') return;
   if (options.config !== undefined) configureGlass(options.config);
+  // The page look, if asked for (the same as applyLook; null = none).
+  if (options.look !== undefined) {
+    const l = options.look && typeof options.look === 'object' ? options.look : { name: options.look };
+    applyGlassLook(l.name ?? null, { color: l.color });
+  }
   if (!document.body) {
     // Loaded from <head>: wait for <body>.
-    document.addEventListener('DOMContentLoaded', () => start({ ...options, config: undefined }), { once: true });
+    document.addEventListener('DOMContentLoaded', () => start({ ...options, config: undefined, look: undefined }), { once: true });
     return;
   }
-  if (!reactRoot) {
+  // (read before the first scan; to change it later: stop(), then start())
+  if (!observer && options.classes !== undefined) classes = options.classes !== false;
+  // provider: false — a page that already runs <GlassProvider> (a React /
+  // Next.js app using the classes or attributes): only attach, no 2nd provider.
+  if (!reactRoot && options.provider !== false) {
     container = document.createElement('div');
     container.setAttribute('data-glass-host', 'provider'); // the glass's own node: page watchers skip it
     container.setAttribute('data-glass-ignore', '');
@@ -174,8 +235,12 @@ export function stop() {
   auto.clear();
   for (const input of [...inputs.keys()]) unenhance(input);
   for (const el of [...widgets.keys()]) unwidget(el);
+  for (const g of groups.values()) g.destroy();
+  groups.clear();
   toaster?.destroy();
   toaster = null;
+  pageLookUndo?.();
+  pageLookUndo = null;
   document.removeEventListener('click', openerClick);
   reactRoot?.unmount();
   reactRoot = null;
@@ -188,7 +253,7 @@ export const attach = (el, group, props) => attachGlass(el, group, props);
 /** Change an element's per-element props without re-attaching it. */
 export const setProps = (el, props) => {
   const a = auto.get(el);
-  if (a) a.raw = el.getAttribute(PROPS_ATTR) || ''; // (so the attribute watcher doesn't undo it)
+  if (a) a.raw = rawOf(el); // (so the attribute watcher doesn't undo it)
   setGlassProps(el, props);
 };
 /** An element's current per-element props (a copy), or null. */
@@ -196,12 +261,14 @@ export const getProps = (el) => getGlassProps(el);
 /** Change some per-element props, keeping the rest. */
 export const mergeProps = (el, partial) => {
   const a = auto.get(el);
-  if (a) a.raw = el.getAttribute(PROPS_ATTR) || ''; // (as setProps)
+  if (a) a.raw = rawOf(el); // (as setProps)
   mergeGlassProps(el, partial);
 };
 export { createSwitch, createSlider, createCheckbox, createRadio, createTextField, createTabBar, createSidebar, createProgress, createSquish };
 export { createSegmented, createStepper, createRangeSlider, createBlockSlider };
 export { createPopover, createMenu, createSelect, createTooltip, createSheet, createToaster, getGlassOverlay };
+// Scroll edge effect + the iOS tilt-permission helper (scrollEdge.js, lightFollow.js).
+export { createScrollEdge, enableTiltHighlight };
 
 let toaster = null; // the shared toaster behind toast()
 /** Show a toast ({ title, body, icon, duration, props }); returns a function that dismisses it. */
@@ -220,10 +287,16 @@ const markedCtl = (target) => {
 export const open = (target) => markedCtl(target)?.open?.();
 /** Close a marked sheet (or popover / menu) — by element or id. */
 export const close = (target) => markedCtl(target)?.close?.();
-export { createShapeSpring, glassMorph };
+export { createShapeSpring, glassMorph, createGlassGroup };
 /** Register <glass-ui> (start() already does) — or the same element under another name. */
 export const defineElement = (name) => defineGlassElement(name);
 export const configure = (config) => configureGlass(config);
+/** The page look: 'clear' | 'frosted' | 'tinted' | 'smoke' (null = none) — see config.js "Looks". */
+export const applyLook = (name, options) => applyGlassLook(name, options);
+/** The page look in use ({ name, color }) or null. */
+export const getLook = () => getGlassLook();
+/** The built-in look names. */
+export const LOOKS = LOOK_NAMES;
 export const addPresets = (config) => addGlassPresets(config);
 export const getConfig = () => getGlassConfig();
 export const requestRender = () => requestGlassRender();
@@ -233,6 +306,10 @@ export { GLASS_VERSION as version } from './index';
 export const onStatus = (fn) => subscribeStatus(fn);
 export const quality = () => getGlassQuality();
 export const onQuality = (fn) => subscribeGlassQuality(fn);
+export const power = () => getGlassPower();
+export const onPower = (fn) => subscribeGlassPower(fn);
+// (A debugging helper — the module build has it in "glassparency/devtools".)
+export { loseGlassContext };
 
 // One vocabulary: the script build has the module's names too (the same
 // functions as above), so code moves between `import … from "glassparency"`
@@ -251,6 +328,11 @@ export {
   onStatus as subscribeGlassStatus,
   quality as getGlassQuality,
   onQuality as subscribeGlassQuality,
+  power as getGlassPower,
+  onPower as subscribeGlassPower,
+  applyLook as applyGlassLook,
+  getLook as getGlassLook,
+  LOOKS as GLASS_LOOKS,
 };
 export { GLASS_VERSION } from './index';
 
@@ -259,15 +341,29 @@ export { GLASS_VERSION } from './index';
 function startAuto() {
   if (observer) return;
   document.addEventListener('click', openerClick);
+  syncPageLook(); // (before the scan: the glass is resolved with it from the start)
   scan(document.body);
   observer = new MutationObserver((records) => {
     let removed = false;
     for (const r of records) {
       if (r.type === 'attributes') {
+        // <html> / <body> data-glassparency-look: the page look.
+        if ((r.target === document.documentElement || r.target === document.body) && (r.attributeName === LOOK_ATTR || r.attributeName === LOOK_COLOR_ATTR)) {
+          syncPageLook();
+          continue;
+        }
+        // A class change: only elements that are (or become) class glass matter
+        // (class changes are frequent on most sites — everything else is skipped).
+        if (r.attributeName === 'class') {
+          if (widgets.has(r.target)) refreshWidget(r.target); // (a control's look class)
+          else if (auto.has(r.target) || r.target.matches?.(CLASS_SEL)) sync(r.target);
+          continue;
+        }
         if (widgets.has(r.target)) refreshWidget(r.target);
         else if (r.target.matches?.(WIDGETS)) widget(r.target);
-        if (inputs.has(r.target)) refreshInput(r.target);
-        else if (r.attributeName === ATTR || r.attributeName === PROPS_ATTR) sync(r.target);
+        if (r.attributeName === GROUP_ATTR) syncGroup(r.target);
+        else if (inputs.has(r.target)) refreshInput(r.target);
+        else if (r.attributeName === ATTR || r.attributeName === PROPS_ATTR || r.attributeName === LOOK_ATTR || r.attributeName === LOOK_COLOR_ATTR) sync(r.target);
         else if (r.target.matches?.(CONTROLS)) enhance(r.target);
       }
       else {
@@ -286,14 +382,35 @@ function startAuto() {
       }
       for (const input of [...inputs.keys()]) if (!input.isConnected) unenhance(input);
       for (const el of [...widgets.keys()]) if (!el.isConnected) unwidget(el);
+      for (const el of [...groups.keys()]) if (!el.isConnected) syncGroup(el);
     }
   });
   observer.observe(document.body, {
     subtree: true,
     childList: true,
     attributes: true,
-    attributeFilter: [ATTR, PROPS_ATTR, SWITCH_ATTR, SLIDER_ATTR, 'disabled', 'min', 'max', 'step', 'value', ...Object.values(W).map((w) => w.attr)],
+    attributeFilter: [
+      ATTR, PROPS_ATTR, LOOK_ATTR, LOOK_COLOR_ATTR, SWITCH_ATTR, SLIDER_ATTR, GROUP_ATTR, 'disabled', 'min', 'max', 'step', 'value',
+      ...Object.values(W).map((w) => w.attr),
+      ...(classes ? ['class'] : []),
+    ],
   });
+  // <html> isn't inside <body>: watched on its own (its look attributes only).
+  observer.observe(document.documentElement, { attributes: true, attributeFilter: [LOOK_ATTR, LOOK_COLOR_ATTR] });
+}
+
+/**
+ * <html> / <body> data-glassparency-look="…" → the page look (<body> wins).
+ * Only while the attribute is there: removing it puts back whatever look
+ * the page had before (applyLook / start({ look }) / the config's).
+ */
+function syncPageLook() {
+  const from = [document.body, document.documentElement].find((n) => n?.hasAttribute(LOOK_ATTR));
+  pageLookUndo?.();
+  pageLookUndo = null;
+  if (!from) return;
+  const color = from.getAttribute(LOOK_COLOR_ATTR) || undefined;
+  pageLookUndo = applyGlassLook(from.getAttribute(LOOK_ATTR) || null, { color });
 }
 
 /** A click on a data-glassparency-open="<id>" button opens that sheet / popover / menu. */
@@ -309,8 +426,11 @@ function openerClick(e) {
 
 /** Attach every data-glassparency element (and glass control input) in (and including) `node`. */
 function scan(node) {
-  if (node.matches?.(`[${ATTR}]`)) sync(node);
-  node.querySelectorAll?.(`[${ATTR}]`).forEach(sync);
+  if (node.matches?.(`[${GROUP_ATTR}]`)) syncGroup(node);
+  node.querySelectorAll?.(`[${GROUP_ATTR}]`).forEach(syncGroup);
+  const sel = glassSel();
+  if (node.matches?.(sel)) sync(node);
+  node.querySelectorAll?.(sel).forEach(sync);
   if (node.matches?.(CONTROLS)) enhance(node);
   node.querySelectorAll?.(CONTROLS).forEach(enhance);
   if (node.matches?.(WIDGETS)) widget(node);
@@ -395,8 +515,8 @@ function unenhance(input) {
 
 /** Bring one element's glass in line with its attributes. */
 function sync(el) {
-  const group = (el.getAttribute(ATTR) || '').trim();
-  const raw = el.getAttribute(PROPS_ATTR) || '';
+  const group = groupOf(el);
+  const raw = rawOf(el);
   const current = auto.get(el);
   if (!group || !el.isConnected) {
     if (current) {
@@ -408,12 +528,88 @@ function sync(el) {
   if (current && current.group === group) {
     if (current.raw !== raw) {
       current.raw = raw;
-      current.handle.setProps(parseProps(raw, el));
+      current.handle.setProps(elementProps(el));
     }
     return;
   }
   current?.handle.destroy();
-  auto.set(el, { group, raw, handle: attachGlass(el, group, parseProps(raw, el)) });
+  auto.set(el, { group, raw, handle: attachGlass(el, group, elementProps(el)) });
+}
+
+/** Elements that get glass: data-glassparency, data-glassparency-look, and (unless off) the glass classes. */
+const glassSel = () => `[${ATTR}], [${LOOK_ATTR}]${classes ? `, ${CLASS_SEL}` : ''}`;
+
+/**
+ * An element's glass group ('' = no glass): data-glassparency="<group>";
+ * else, for an element marked only by a look (attribute or class) or the
+ * classes, glass-group-<name> / glass-group-[name], or "panel".
+ * (<html> / <body>: a look there is the PAGE look, not glass on them;
+ * <glass-ui> is its own glass.)
+ */
+function groupOf(el) {
+  const attr = (el.getAttribute(ATTR) || '').trim();
+  if (attr) return attr;
+  if (el === document.documentElement || el === document.body || el.localName === 'glass-ui') return '';
+  // A marked control (data-glassparency-tabbar…) with a look: the look is the
+  // control's (elementProps), not a 2nd glass on the same element.
+  if (el.matches(WIDGETS) || el.matches(CONTROLS)) return '';
+  const cls = classes ? [...el.classList] : [];
+  const marked = el.hasAttribute(LOOK_ATTR) || cls.some((c) => c === 'glass' || c in LOOK_CLASSES || c.startsWith(GROUP_CLASS));
+  if (!marked) return '';
+  const g = cls.find((c) => c.startsWith(GROUP_CLASS));
+  return g ? g.slice(GROUP_CLASS.length).replace(/^\[(.*)\]$/, '$1') || 'panel' : 'panel';
+}
+
+/** An element's look: data-glassparency-look, else a look class ('' = none of its own). */
+function lookOf(el) {
+  const attr = el.getAttribute(LOOK_ATTR);
+  if (attr !== null) return attr.trim();
+  if (!classes) return '';
+  for (const c of el.classList) if (c in LOOK_CLASSES) return LOOK_CLASSES[c];
+  return '';
+}
+
+/** What decides an element's props (compared to skip needless updates). */
+const rawOf = (el) => `${el.getAttribute(PROPS_ATTR) || ''}\u0001${lookOf(el)}\u0001${el.getAttribute(LOOK_COLOR_ATTR) || ''}`;
+
+/**
+ * An element's per-element props: data-glassparency-props, plus its look
+ * (data-glassparency-look / a look class) and the tinted colour
+ * (data-glassparency-look-color, else the CSS variable --glassparency-look-color —
+ * what the Tailwind plugin's glass-tint-* classes set). A "look" inside the
+ * props JSON wins.
+ */
+function elementProps(el) {
+  const p = parseProps(el.getAttribute(PROPS_ATTR) || '', el);
+  const look = lookOf(el);
+  if (look && p.look === undefined) p.look = look;
+  if (p.lookColor === undefined) {
+    let color = el.getAttribute(LOOK_COLOR_ATTR) || '';
+    if (!color && (p.look || look) === 'tinted') {
+      try {
+        color = getComputedStyle(el).getPropertyValue(LOOK_COLOR_VAR).trim();
+      } catch {
+        color = ''; // (not rendered yet — the look's default colour)
+      }
+    }
+    if (color) p.lookColor = color;
+  }
+  return p;
+}
+
+/** A data-glassparency-group container: make, update or remove its glass group. */
+function syncGroup(el) {
+  const g = groups.get(el);
+  const on = el.isConnected && el.hasAttribute(GROUP_ATTR);
+  if (!on) {
+    g?.destroy();
+    groups.delete(el);
+    return;
+  }
+  const raw = el.getAttribute(GROUP_ATTR);
+  const spacing = raw === '' || !Number.isFinite(Number(raw)) ? undefined : Number(raw);
+  if (g) g.setSpacing(spacing ?? 24);
+  else groups.set(el, createGlassGroup(el, { spacing }));
 }
 
 /** data-glassparency-props JSON → props ({} when empty or invalid, with a warning). */
@@ -441,7 +637,7 @@ function widget(el) {
   if (widgets.has(el) || !el.isConnected) return;
   const kind = kindOf(el);
   if (!kind) return;
-  const props = parseProps(el.getAttribute(PROPS_ATTR) || '', el);
+  const props = elementProps(el); // (data-glassparency-props + its look, if any)
   const fire = (target, type, detail) =>
     target.dispatchEvent(detail ? new CustomEvent(type, { bubbles: true, detail }) : new Event(type, { bubbles: true }));
 
@@ -475,7 +671,7 @@ function widget(el) {
       } else refreshWidget(el);
     };
     el.addEventListener('change', follow);
-    widgets.set(el, { kind, raw: el.getAttribute(PROPS_ATTR) || '', ctl, extra: box, off: () => el.removeEventListener('change', follow) });
+    widgets.set(el, { kind, raw: rawOf(el), ctl, extra: box, off: () => el.removeEventListener('change', follow) });
     return;
   }
 
@@ -487,19 +683,19 @@ function widget(el) {
     el.after(bar);
     el.style.display = 'none';
     const ctl = createProgress(bar, { value: progressValue(el), bead: el.hasAttribute('data-glassparency-bead'), props: { track: props } });
-    widgets.set(el, { kind, raw: el.getAttribute(PROPS_ATTR) || '', ctl, extra: bar, off: () => {} });
+    widgets.set(el, { kind, raw: rawOf(el), ctl, extra: bar, off: () => {} });
     return;
   }
 
   if (kind === 'field') {
     const ctl = createTextField(el, { clearable: el.hasAttribute('data-glassparency-clearable'), props: { field: props } });
-    widgets.set(el, { kind, raw: el.getAttribute(PROPS_ATTR) || '', ctl, off: () => {} });
+    widgets.set(el, { kind, raw: rawOf(el), ctl, off: () => {} });
     return;
   }
 
   if (kind in NEW_KINDS) {
     const made = NEW_KINDS[kind](el, props, fire);
-    if (made) widgets.set(el, { kind, raw: el.getAttribute(PROPS_ATTR) || '', ...made });
+    if (made) widgets.set(el, { kind, raw: rawOf(el), ...made });
     return;
   }
 
@@ -516,7 +712,7 @@ function widget(el) {
     props: { bar: props },
     onChange: (index) => fire(el, 'glassparency:change', { index }),
   });
-  widgets.set(el, { kind, raw: el.getAttribute(PROPS_ATTR) || '', ctl, off: () => (marked ? null : items.forEach((it) => it.removeAttribute('data-gp-item'))) });
+  widgets.set(el, { kind, raw: rawOf(el), ctl, off: () => (marked ? null : items.forEach((it) => it.removeAttribute('data-gp-item'))) });
 }
 
 /** <progress> → 0–1, or null while it has no value (busy). */
@@ -531,7 +727,7 @@ function refreshWidget(el) {
   const w = widgets.get(el);
   if (!w) return;
   // Unmarked, marked as something else, or new props: build it again.
-  if (kindOf(el) !== w.kind || (el.getAttribute(PROPS_ATTR) || '') !== w.raw) {
+  if (kindOf(el) !== w.kind || rawOf(el) !== w.raw) {
     unwidget(el);
     widget(el);
     return;
@@ -762,6 +958,25 @@ const NEW_KINDS = {
       .filter((d) => d > 0 && d <= 1);
     const ctl = createSheet(el, { detents: detents.length ? detents : undefined, props, onClose: () => fire(el, 'glassparency:close') });
     return { ctl, off: () => {} };
+  },
+
+  // A scroll container: data-glassparency-scroll-edge="top soft" (+ -size="32",
+  // -inset="56" or "56 80" for top / bottom, -color="#fff"). On <body> / <html>:
+  // the page's own scrolling.
+  scrolledge(el) {
+    const read = () => {
+      const words = (el.getAttribute(W.scrolledge.attr) || '').trim().split(/\s+/);
+      const inset = (el.getAttribute('data-glassparency-scroll-edge-inset') || '').trim().split(/\s+/).map(Number);
+      return {
+        edges: words.find((w) => w === 'top' || w === 'bottom' || w === 'both') || 'top',
+        effect: words.includes('hard') ? 'hard' : 'soft',
+        size: el.getAttribute('data-glassparency-scroll-edge-size') ?? undefined,
+        inset: { top: inset[0] || 0, bottom: inset.length > 1 ? inset[1] || 0 : inset[0] || 0 },
+        color: el.getAttribute('data-glassparency-scroll-edge-color') || 'auto',
+      };
+    };
+    const ctl = createScrollEdge(el === document.body || el === document.documentElement ? window : el, read());
+    return { ctl, off: () => {}, refresh: () => ctl.update(read()) };
   },
 };
 

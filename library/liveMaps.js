@@ -60,6 +60,9 @@ const CACHE_MAX = 96;
  */
 function computeMap(a, tilt) {
   const { fullW, fullH, fullRadius, fullRim, profile, strength, minify, maxPixels, yNudge } = a;
+  // "corners": "squircle": n > 2 = superellipse corners of extent fullRadius
+  // (live.js passes the squircle's extent R — rim.js); 0 = round (as before).
+  const cn = a.cornerN || 0;
   const k = Math.min(1, Math.sqrt(maxPixels / (fullW * fullH)));
   const w = Math.max(1, Math.round(fullW * k));
   const h = Math.max(1, Math.round(fullH * k));
@@ -91,6 +94,20 @@ function computeMap(a, tilt) {
     out.d = len + Math.min(Math.max(qx, qy), 0) - rr;
     out.gx = 0;
     out.gy = 0;
+    if (cn > 2 && qx > 0 && qy > 0 && rr > 0.01) {
+      // Squircle corner: the n-norm distance, divided by its gradient's
+      // length (≈ px near the edge) — the WebGL shaders' glassSdSquircle.
+      const ux = qx / rr + 1e-6;
+      const uy = qy / rr + 1e-6;
+      const L = Math.pow(ux ** cn + uy ** cn, 1 / cn);
+      const g1 = (ux / L) ** (cn - 1);
+      const g2 = (uy / L) ** (cn - 1);
+      const gl = Math.hypot(g1, g2) || 1;
+      out.d = (rr * (L - 1)) / gl;
+      out.gx = (g1 / gl) * Math.sign(px);
+      out.gy = (g2 / gl) * Math.sign(py);
+      return out;
+    }
     if (qx > 0 && qy > 0) {
       out.gx = (mx / len) * Math.sign(px);
       out.gy = (my / len) * Math.sign(py);
@@ -154,8 +171,8 @@ const cache = new Map();
 const pending = new Map();
 
 /** The cache key for a map's inputs (rounded like live.js's own filter key). */
-export function mapKey({ w, h, radius, rim, profile, strength, minify }) {
-  return `${w}|${h}|${radius}|${rim}|${profile}|${strength.toFixed(1)}|${(minify || 0).toFixed(3)}`;
+export function mapKey({ w, h, radius, rim, profile, strength, minify, cornerN }) {
+  return `${w}|${h}|${radius}|${rim}|${profile}|${strength.toFixed(1)}|${(minify || 0).toFixed(3)}${cornerN ? `|sq${cornerN}` : ''}`;
 }
 
 function remember(key, map) {
@@ -171,7 +188,7 @@ export function cachedMap(key) {
   return hit || null;
 }
 
-const argsOf = ({ w, h, radius, rim, profile, strength, minify }) => ({
+const argsOf = ({ w, h, radius, rim, profile, strength, minify, cornerN }) => ({
   fullW: w,
   fullH: h,
   fullRadius: radius,
@@ -179,6 +196,7 @@ const argsOf = ({ w, h, radius, rim, profile, strength, minify }) => ({
   profile,
   strength,
   minify: minify || 0,
+  cornerN: cornerN || 0, // squircle corners (0 = round)
   maxPixels: MAX_MAP_PIXELS,
   yNudge: MINIFY_Y_NUDGE,
 });

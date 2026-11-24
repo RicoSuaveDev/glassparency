@@ -14,6 +14,15 @@
  *   <out>/dist/index.js             ES module (React apps; "use client")
  *   <out>/dist/index.cjs            CommonJS (require(), Jest, older tools)
  *   <out>/dist/GlassCanvas-*.js|cjs the WebGL part, loaded lazily
+ *   <out>/dist/devtools.js|cjs      tuning + debugging ("glassparency/devtools")
+ *   <out>/dist/vanilla.js|cjs       the plain-JS API as a module — window.Glassparency's
+ *                                   functions, no auto-start ("glassparency/vanilla")
+ *   <out>/dist/vue.js|cjs           Vue 3 wrappers ("glassparency/vue": v-glass, components)
+ *   <out>/dist/svelte/              Svelte 5 wrappers ("glassparency/svelte"): actions.js
+ *                                   (compiled) + the .svelte components and index.js
+ *                                   (copied as source from ../adapters/svelte — the
+ *                                   site's own Svelte compiles them)
+ *   <out>/dist/tailwind.js|cjs      the Tailwind plugin ("glassparency/tailwind", v3 + v4)
  *   <out>/dist/index.d.ts / .d.cts  TypeScript types (index.d.ts here)
  *   <out>/dist/glassparency.standalone.js   one-file script for any site
  *                                   (React + three.js inside, window.Glassparency)
@@ -27,7 +36,11 @@
  *
  * After building it smoke-tests the result (see smokeTest): the package is
  * imported the way Node / a server renderer would (ESM and CommonJS), which
- * proves it loads without a browser and exports everything it should.
+ * proves it loads without a browser and exports everything it should —
+ * every entry: the main one, devtools, vanilla, vue (rendered on the
+ * "server" too when Vue is installed), the Svelte actions (and the .svelte
+ * files compiled when Svelte is installed) and the Tailwind plugin (run
+ * against a stand-in of Tailwind's plugin API).
  *
  * Usage (from anywhere; the release script calls this):
  *   node client/src/glass/npm/build.mjs build [--out <dir>] [--version <x.y.z>]
@@ -68,6 +81,18 @@ const TEMPLATE = join(NPM_DIR, 'package.template.json');
 const CHANGELOG = join(NPM_DIR, 'CHANGELOG.md');
 const MARKER = '.glassparency-build'; // "this folder was made by build.mjs"
 const README_NAME = 'glassparency'; // the package name README.md is written with
+const ADAPTERS = join(GLASS_DIR, 'adapters'); // the framework wrappers (Vue, Svelte, Tailwind)
+// The library entries besides index: subpath → source (dist/<subpath>.js / .cjs).
+// Each is a "glassparency/<subpath>" export in package.template.json.
+const ENTRIES = {
+  devtools: join(GLASS_DIR, 'devtools.js'), // tuning + debugging
+  vanilla: join(GLASS_DIR, 'standalone.js'), // the plain-JS API (window.Glassparency as a module)
+  vue: join(ADAPTERS, 'vue.js'),
+  'svelte/actions': join(ADAPTERS, 'svelte/actions.js'), // (svelte/index.js + the .svelte files are copied)
+  tailwind: join(ADAPTERS, 'tailwind.js'),
+};
+// Hand-written types for the entries above (npm/<name>.d.ts → dist/<name>.d.ts + .d.cts).
+const ENTRY_TYPES = ['devtools', 'vanilla', 'vue', 'tailwind'];
 
 /** Globals that only make sense for DashboardPro (left out of the package's presets). */
 const APP_ONLY_GLOBALS = ['root', 'background'];
@@ -191,8 +216,8 @@ async function buildAll() {
         cssMinify: true, // (the glass.css string the provider injects: no comments)
         sourcemap: true,
         lib: {
-          // (devtools: tuning + debugging — "glassparency/devtools")
-          entry: { index: join(GLASS_DIR, 'index.js'), devtools: join(GLASS_DIR, 'devtools.js') },
+          // (index + the subpath entries: devtools, vanilla, vue, svelte/actions, tailwind — see ENTRIES)
+          entry: { index: join(GLASS_DIR, 'index.js'), ...ENTRIES },
           formats: [format],
           fileName: (_f, name) => `${name}.${ext}`,
         },
@@ -200,7 +225,13 @@ async function buildAll() {
           external,
           output: {
             // Next.js App Router & co.: the library uses hooks and the DOM.
+            // (Every entry and chunk — the wrappers and the Tailwind plugin
+            // too: harmless where nothing reads it.)
             banner: "'use client';",
+            // CommonJS: an entry with only a default export (the Tailwind
+            // plugin) becomes module.exports itself — require() gives the
+            // plugin, as Tailwind v3 expects.
+            exports: 'auto',
             chunkFileNames: `chunks/[name]-[hash].${ext}`,
             // The source's comments are written for DashboardPro (where the
             // library lives); the published code ships without them. Its
@@ -264,8 +295,18 @@ async function buildAll() {
   const typesOut = types.replace('/*@@GLASS_GROUPS@@*/', groupNames.map((g) => `  ${JSON.stringify(g)}: true;`).join('\n'));
   writeFileSync(join(dist, 'index.d.ts'), typesOut);
   writeFileSync(join(dist, 'index.d.cts'), typesOut);
-  cpSync(join(NPM_DIR, 'devtools.d.ts'), join(dist, 'devtools.d.ts'));
-  cpSync(join(NPM_DIR, 'devtools.d.ts'), join(dist, 'devtools.d.cts'));
+  for (const name of ENTRY_TYPES) {
+    cpSync(join(NPM_DIR, `${name}.d.ts`), join(dist, `${name}.d.ts`));
+    // (CommonJS types: the Tailwind plugin IS module.exports there)
+    const dts = readFileSync(join(NPM_DIR, `${name}.d.ts`), 'utf8');
+    writeFileSync(join(dist, `${name}.d.cts`), name === 'tailwind' ? dts.replace('export default glassparency;', 'export = glassparency;') : dts);
+  }
+  // Svelte: the components ship as .svelte source (+ index.js, which
+  // re-exports them and the compiled actions) next to dist/svelte/actions.js.
+  for (const f of readdirSync(join(ADAPTERS, 'svelte'))) {
+    if (f.endsWith('.svelte') || f === 'index.js') cpSync(join(ADAPTERS, 'svelte', f), join(dist, 'svelte', f));
+  }
+  cpSync(join(NPM_DIR, 'svelte.d.ts'), join(dist, 'svelte', 'index.d.ts'));
   // Every setting in the schema must be typed (GlassProps) — else it was added to config.js and forgotten here.
   const untyped = Object.keys(readSchemaKeys()).filter((k) => !new RegExp(`\\n\\s+${k}\\??:`).test(types));
   if (untyped.length) fail(`index.d.ts GlassProps is missing: ${untyped.join(', ')}`);
@@ -324,7 +365,20 @@ function checkOutput(dist) {
     if (/import\.meta\.hot\.accept/.test(code)) bad.push(`${f}: contains dev-only hot-reload code`);
     if (/DashboardPro|DenPro/i.test(code)) bad.push(`${f}: mentions DashboardPro / DenPro`);
   }
-  for (const need of ['index.js', 'index.cjs', 'devtools.js', 'devtools.cjs', 'devtools.d.ts', 'glassparency.standalone.js']) if (!files.includes(need)) bad.push(`missing dist/${need}`);
+  const needed = [
+    'index.js', 'index.cjs', 'glassparency.standalone.js',
+    ...Object.keys(ENTRIES).flatMap((e) => [`${e}.js`, `${e}.cjs`]),
+    ...ENTRY_TYPES.flatMap((e) => [`${e}.d.ts`, `${e}.d.cts`]),
+    'svelte/index.js', 'svelte/index.d.ts', 'svelte/GlassSwitch.svelte',
+  ];
+  for (const need of needed) if (!files.includes(need) && !existsSync(join(dist, need))) bad.push(`missing dist/${need}`);
+  // Next.js App Router: every client entry must start with "use client" (ESM + CJS).
+  for (const e of ['index', 'devtools', 'vanilla', 'vue', 'svelte/actions']) {
+    for (const ext of ['js', 'cjs']) {
+      const f = join(dist, `${e}.${ext}`);
+      if (existsSync(f) && !/^\s*['"]use client['"]/.test(readFileSync(f, 'utf8'))) bad.push(`dist/${e}.${ext}: doesn't start with "use client"`);
+    }
+  }
   if (bad.length) fail(`the build is not clean:\n  ${bad.join('\n  ')}`);
   console.log('✔ build output checked (no app-only code, all entry files present)');
 }
@@ -378,9 +432,89 @@ function smokeTest(out, pkg) {
     const devCheck = `if (typeof d.setGlassOverride !== 'function' || !d.GLASS_SCHEMA) { console.error('devtools entry incomplete'); process.exit(1); }`;
     writeFileSync(join(tmp, 'dev.mjs'), `import * as d from ${JSON.stringify(`${pkg.name}/devtools`)};\n${devCheck}\nconsole.log('devtools ESM ok');`);
     writeFileSync(join(tmp, 'dev.cjs'), `const d = require(${JSON.stringify(`${pkg.name}/devtools`)});\n${devCheck}\nconsole.log('devtools CJS ok');`);
+    const files = ['esm.mjs', 'cjs.cjs', 'dev.mjs', 'dev.cjs'];
+    // Looks: applyGlassLook changes what resolveGlass gives (no browser needed).
+    writeFileSync(
+      join(tmp, 'looks.mjs'),
+      `import * as m from ${JSON.stringify(pkg.name)};
+      const plain = m.resolveGlass('card');
+      const want = ['clear', 'frosted', 'tinted', 'smoke'];
+      if (JSON.stringify(m.GLASS_LOOKS) !== JSON.stringify(want)) { console.error('GLASS_LOOKS: ' + m.GLASS_LOOKS); process.exit(1); }
+      const seen = new Set([JSON.stringify(plain)]);
+      for (const name of want) {
+        m.applyGlassLook(name);
+        const r = m.resolveGlass('card');
+        if (m.getGlassLook()?.name !== name || seen.has(JSON.stringify(r))) { console.error('look ' + name + ' did not change the card'); process.exit(1); }
+        seen.add(JSON.stringify(r));
+        // per-element "none" = no look; knobs (solid) never change
+        if (JSON.stringify(m.resolveGlass('card', { look: 'none' })) !== JSON.stringify(plain)) { console.error('look "none" did not opt out'); process.exit(1); }
+        if (JSON.stringify(m.resolveGlass('switchKnob')) !== JSON.stringify(m.resolveGlass('switchKnob', { look: 'none' }))) { console.error(name + ' changed a solid knob'); process.exit(1); }
+      }
+      m.applyGlassLook(null);
+      if (JSON.stringify(m.resolveGlass('card')) !== JSON.stringify(plain) || m.getGlassLook() !== null) { console.error('applyGlassLook(null) did not reset'); process.exit(1); }
+      if (m.resolveGlass('card', { look: 'tinted', lookColor: '#ff2d55' }).tint.from !== '#ff2d55') { console.error('lookColor ignored'); process.exit(1); }
+      console.log('looks ok (clear, frosted, tinted, smoke all differ; none / solid parts / reset / lookColor)');`
+    );
+    files.push('looks.mjs');
+    // The plain-JS API (vanilla), both formats: loads with no document; start() is a no-op there.
+    const vanillaCheck = `
+      for (const k of ['start', 'stop', 'attach', 'applyLook', 'applyGlassLook', 'getGlassLook', 'GLASS_LOOKS', 'createSwitch', 'toast', 'configure']) if (!(k in v)) { console.error('vanilla is missing ' + k); process.exit(1); }
+      v.start(); v.stop && typeof v.stop === 'function';`;
+    writeFileSync(join(tmp, 'vanilla.mjs'), `import * as v from ${JSON.stringify(`${pkg.name}/vanilla`)};\n${vanillaCheck}\nconsole.log('vanilla ESM ok');`);
+    writeFileSync(join(tmp, 'vanilla.cjs'), `const v = require(${JSON.stringify(`${pkg.name}/vanilla`)});\n${vanillaCheck}\nconsole.log('vanilla CJS ok');`);
+    files.push('vanilla.mjs', 'vanilla.cjs');
+    // Svelte actions (ESM; the components need Svelte's compiler — below).
+    writeFileSync(
+      join(tmp, 'svelte.mjs'),
+      `import * as s from ${JSON.stringify(`${pkg.name}/svelte/actions`)};
+      for (const k of ['glass', 'glassSwitch', 'glassSlider', 'glassSelect', 'glassSheet', 'startGlass', 'applyGlassLook']) if (typeof s[k] !== 'function') { console.error('svelte actions: missing ' + k); process.exit(1); }
+      const a = s.glass(null, 'card'); a.update('panel'); a.destroy(); // (no element / no document: a no-op)
+      console.log('svelte actions ESM ok');`
+    );
+    files.push('svelte.mjs');
+    // Tailwind plugin: require (v3) + import (v4), run against a stand-in plugin API.
+    const twCheck = `
+      if (typeof tw !== 'function' || !tw.__isOptionsFunction) { console.error('tailwind: not an options function'); process.exit(1); }
+      const made = []; const api = { addUtilities: (u) => made.push(...Object.keys(u)), matchUtilities: (u, o) => made.push(...Object.keys(u).map((k) => k + '-*' + (o.values ? Object.keys(o.values).length : 0))), theme: () => ({ rose: { 500: '#f43f5e' }, black: '#000' }) };
+      tw().handler(api); tw({ fallback: false }).handler(api);
+      for (const c of ['.glass', '.glass-clear', '.glass-frosted', '.glass-tinted', '.glass-smoke']) if (!made.includes(c)) { console.error('tailwind: no ' + c + ' (' + made + ')'); process.exit(1); }
+      if (!made.includes('glass-tint-*2')) { console.error('tailwind: theme colours not flattened (' + made + ')'); process.exit(1); }`;
+    writeFileSync(join(tmp, 'tw.cjs'), `const tw = require(${JSON.stringify(`${pkg.name}/tailwind`)});\n${twCheck}\nconsole.log('tailwind CJS (v3 require) ok');`);
+    writeFileSync(join(tmp, 'tw.mjs'), `import tw from ${JSON.stringify(`${pkg.name}/tailwind`)};\n${twCheck}\nconsole.log('tailwind ESM (v4 @plugin) ok');`);
+    files.push('tw.cjs', 'tw.mjs');
+    // Vue (an optional peer — only when installed where the build runs):
+    // import both formats, and render the components + v-glass on the server.
+    if (existsSync(join(nm, 'vue'))) {
+      writeFileSync(
+        join(tmp, 'vue.mjs'),
+        `import * as gv from ${JSON.stringify(`${pkg.name}/vue`)};
+        const { createSSRApp, h } = await import('vue');
+        const { renderToString } = await import('vue/server-renderer');
+        const app = createSSRApp({ render: () => h('div', [h(gv.Glass, { group: 'card', look: 'frosted' }, () => 'Hello glass'), h(gv.GlassSwitch, { modelValue: true, 'aria-label': 'Wi-Fi' }), h(gv.GlassSelect, { modelValue: 'a', options: [{ value: 'a', label: 'A' }] })]) });
+        app.use(gv.GlassparencyPlugin, { look: 'smoke' });
+        const html = await renderToString(app);
+        if (!/Hello glass/.test(html) || !/<button[^>]*aria-label="Wi-Fi"/.test(html)) { console.error('vue server render gave: ' + html); process.exit(1); }
+        console.log('vue ESM + server render ok');`
+      );
+      writeFileSync(join(tmp, 'vue.cjs'), `const gv = require(${JSON.stringify(`${pkg.name}/vue`)});\nif (!gv.vGlass || !gv.GlassSwitch) { console.error('vue CJS incomplete'); process.exit(1); }\nconsole.log('vue CJS ok');`);
+      files.push('vue.mjs', 'vue.cjs');
+    } else console.log('• smoke test: vue not installed here — "glassparency/vue" not loaded (install vue next to the build to test it)');
+    // Svelte components: compiled (client + server) when Svelte's compiler is installed.
+    if (existsSync(join(nm, 'svelte'))) {
+      writeFileSync(
+        join(tmp, 'svelte-compile.mjs'),
+        `import { compile } from 'svelte/compiler';
+        import { readdirSync, readFileSync } from 'node:fs';
+        const dir = ${JSON.stringify(join(out, 'dist', 'svelte'))};
+        const comps = readdirSync(dir).filter((f) => f.endsWith('.svelte'));
+        for (const f of comps) for (const generate of ['client', 'server']) compile(readFileSync(dir + '/' + f, 'utf8'), { filename: f, generate });
+        console.log('svelte components compile ok (' + comps.length + ', client + server)');`
+      );
+      files.push('svelte-compile.mjs');
+    } else console.log('• smoke test: svelte not installed here — the .svelte components not compiled (install svelte next to the build to test them)');
     const run = (file) =>
       execFileSync(process.execPath, ['--preserve-symlinks', '--no-warnings', join(tmp, file)], { cwd: tmp, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-    for (const f of ['esm.mjs', 'cjs.cjs', 'dev.mjs', 'dev.cjs']) {
+    for (const f of files) {
       try {
         console.log(`✔ smoke test: ${run(f)} (loads in Node without a browser)`);
       } catch (err) {

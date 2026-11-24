@@ -34,14 +34,49 @@ export type GlassGroupName = keyof GlassGroups | (string & {});
 /** The look family: "default" = the group's own values (Apple), "crystal" = clearer, thicker glass, "frosted" = milky, heavily frosted glass in the group's own tint. */
 export type GlassStyle = 'default' | 'crystal' | 'frosted';
 
+/**
+ * A ready-made look (theme) for the whole page or one element:
+ * "clear" (barely-there glass, bright rim), "frosted" (milky, heavily
+ * frosted), "tinted" (one colour — lookColor), "smoke" (dark smoke:
+ * smoked near-black glass; "dark-smoke" works too). "none" = no look for
+ * this element even when the page has one. Custom looks from the config's
+ * "looks" block are accepted by name.
+ */
+export type GlassLookName = 'clear' | 'frosted' | 'tinted' | 'smoke';
+export type GlassLook = GlassLookName | 'dark-smoke' | 'none' | (string & {});
+
+/**
+ * A custom glass outline (1.5.2): the glass is drawn from a distance field of
+ * the shape, fitted into the element's box. Pass it as `shape`.
+ *   { path: 'M…', viewBox?: '0 0 24 24', fillRule?: 'nonzero' | 'evenodd', fit?: 'contain' | 'fill' }
+ *   { svg: '<svg …>…</svg>' | SVGElement | 'child' }   ('child' = the element's own first <svg>, which is then hidden)
+ *   { text: string | true }                           (true = the element's own text; see <GlassText>)
+ */
+export type GlassCustomShape =
+  | { path: string; viewBox?: string; fillRule?: 'nonzero' | 'evenodd'; fit?: 'contain' | 'fill' }
+  | { svg: string | SVGElement | 'child'; fit?: 'contain' | 'fill' }
+  | { text: string | true };
+/** A custom shape after validation (ResolvedGlass.customShape). */
+export type GlassResolvedCustomShape =
+  | { kind: 'path'; path: string; viewBox: string | null; fillRule: 'nonzero' | 'evenodd'; fit: 'contain' | 'fill' }
+  | { kind: 'svg'; svg: string; fit: 'contain' | 'fill' }
+  | { kind: 'text'; text: string | true };
+
 export interface GlassProps {
   enabled?: boolean;
   style?: GlassStyle;
+  /** This element's (or group's) look — wins over the page look. "none" = no look. */
+  look?: GlassLook;
+  /** The tinted look's colour for this element (any CSS colour). */
+  lookColor?: string;
   layer?: 'auto' | GlassLayer;
   tier?: 'auto' | 0 | 1 | 2 | 3 | 4 | 5;
   sampler?: 'auto' | 'webgl' | 'live';
-  shape?: 'rectangle' | 'roundedRectangle' | 'circle' | 'capsule';
+  /** A named shape, or a custom outline (path / svg icon / text — see GlassCustomShape). */
+  shape?: 'rectangle' | 'roundedRectangle' | 'circle' | 'capsule' | GlassCustomShape;
   radius?: number | 'auto';
+  /** The outline's corners: round (default) or Apple-style continuous-curvature squircle (rounded rectangles only). */
+  corners?: 'round' | 'squircle';
   scale?: { x?: number; y?: number };
   bleed?: GlassSides;
   padding?: GlassSides;
@@ -66,6 +101,10 @@ export interface GlassProps {
   rimLight?: number;
   rimWidth?: number;
   lightAngle?: number;
+  /** Opt-in pointer / tilt highlight: the rim light turns towards the pointer or follows the device tilt (default 'off'). */
+  lightFollow?: 'off' | 'auto' | 'pointer' | 'tilt';
+  /** How far the followed light turns away from lightAngle, 0–1 (default 1). */
+  lightFollowAmount?: number;
   innerGlow?: number;
   pressScale?: number;
   pressGlow?: number;
@@ -131,6 +170,10 @@ export interface GlassBackgroundTheme {
 
 export interface GlassGlobal {
   enabled?: boolean;
+  /** The page look from the config (applyGlassLook() / <GlassProvider look> win over it). */
+  look?: GlassLook;
+  /** The tinted look's colour (default "#5b7cfa"). */
+  lookColor?: string;
   /** Element whose changes move glass and that WebGL floating glass photographs (default "body"). */
   root?: string;
   /** "auto" = the page's own background colour; or an exact copy per theme. */
@@ -161,6 +204,14 @@ export interface GlassGlobal {
   bufferScale?: number;
   /** "auto" (default) = full quality, throttled only while animation is too slow; or a fixed level. */
   quality?: 'auto' | 'high' | 'medium' | 'low';
+  /**
+   * Saving power (default true): draw nothing while the tab is hidden (one
+   * redraw catches up when it's shown), and animate like "Reduce motion"
+   * while the battery is low (≤ 20 %) and unplugged — Battery Status API,
+   * where the browser has it. The OS "Reduce motion" setting is followed
+   * either way. false = always draw / animate in full.
+   */
+  powerSaving?: boolean;
   debugOutlines?: boolean;
   snapshot?: {
     enabled?: boolean;
@@ -175,15 +226,34 @@ export interface GlassGlobal {
   };
 }
 
+/**
+ * A look in the config's "looks" block: fine-tuning for a built-in look (its
+ * props are merged over the look's rules for every glass part), or a new
+ * look built on one ("base").
+ */
+export interface GlassLookDefinition extends GlassProps {
+  /** The built-in look whose rules it starts from (none = only these props). */
+  base?: GlassLookName;
+  /** The tinted look's colour. */
+  color?: string;
+  /** What changes in dark mode. */
+  dark?: GlassProps;
+}
+
 export interface GlassConfig {
   global?: GlassGlobal;
   defaults?: GlassGroup;
   groups?: Record<string, GlassGroup>;
   themes?: { dark?: { defaults?: GlassGroup; groups?: Record<string, GlassGroup> } };
+  /** Custom looks, or fine-tuning of the built-in ones (see GlassLookDefinition). */
+  looks?: Record<string, GlassLookDefinition>;
 }
 
 /** A resolved, validated look (what the renderer uses). */
-export type ResolvedGlass = Required<Omit<GlassProps, 'tint' | 'scale' | 'bleed' | 'padding'>> & {
+export type ResolvedGlass = Required<Omit<GlassProps, 'tint' | 'scale' | 'bleed' | 'padding' | 'shape'>> & {
+  /** "custom" when the outline is a custom shape (then customShape holds it). */
+  shape: 'rectangle' | 'roundedRectangle' | 'circle' | 'capsule' | 'custom';
+  customShape: GlassResolvedCustomShape | null;
   tint: { from: string; via: string | null; to: string; angle: number };
   scale: { x: number; y: number };
   bleed: Required<GlassSides>;
@@ -196,6 +266,8 @@ export interface GlassProviderProps {
   children?: ReactNode;
   /** Your config, deep-merged over the built-in presets. */
   config?: GlassConfig;
+  /** The page look: "clear" | "frosted" | "tinted" | "smoke" (or { name, color }). Same store as applyGlassLook(). */
+  look?: GlassLook | { name: GlassLook | null; color?: string } | null;
   /** Draws <Glass icon="name"> icons. */
   renderIcon?: (name: string, size: number) => ReactNode;
   /** Add glass.css to the page (default true). false = import "<package>/glass.css" yourself. */
@@ -211,11 +283,57 @@ export type GlassComponentProps<T extends ElementType = 'div'> = {
   as?: T;
   group?: GlassGroupName;
   glass?: GlassProps;
+  /** This element's look (shorthand for glass={{ look }}). */
+  look?: GlassLook;
+  /** The tinted look's colour (shorthand for glass={{ lookColor }}). */
+  lookColor?: string;
   icon?: ReactNode | string;
   iconSize?: number;
-} & Omit<ComponentPropsWithRef<T>, 'as' | 'group' | 'glass' | 'icon' | 'iconSize'>;
+  /** The glass outline: a named shape or a custom one (same as glass={{ shape }}, which it overrides). */
+  shape?: GlassProps['shape'];
+} & Omit<ComponentPropsWithRef<T>, 'as' | 'group' | 'glass' | 'look' | 'lookColor' | 'icon' | 'iconSize' | 'shape'>;
 /** Glass on any element: <Glass as="button" group="button" onClick={…}>. Props and ref follow `as` (default "div"). */
 export declare const Glass: <T extends ElementType = 'div'>(props: GlassComponentProps<T>) => JSX.Element | null;
+
+// --- Glass groups (melting) + glass text (1.5.2) ------------------------------------------
+
+export type GlassGroupProps<T extends ElementType = 'div'> = {
+  /** The container element (default "div"). */
+  as?: T;
+  /** Glass pieces inside melt together once they're this close (px, default 24, max 200). */
+  spacing?: number;
+} & Omit<ComponentPropsWithRef<T>, 'as' | 'spacing'>;
+/**
+ * Like Apple's GlassEffectContainer: the glass inside is drawn as one liquid
+ * surface — pieces within `spacing` px melt together, and pull apart as they
+ * move away (live while they animate). Up to 16 pieces melt per group (and
+ * up to 4 of them with custom shapes); more are drawn on their own. Members
+ * on different layers / tiers never melt. CSS fallback: separate pieces.
+ */
+export declare const GlassGroup: <T extends ElementType = 'div'>(props: GlassGroupProps<T>) => JSX.Element | null;
+
+export type GlassTextProps<T extends ElementType = 'span'> = {
+  /** The element (default "span"; e.g. "h1"). */
+  as?: T;
+  group?: GlassGroupName;
+  glass?: GlassProps;
+} & Omit<ComponentPropsWithRef<T>, 'as' | 'group' | 'glass'>;
+/**
+ * Headline text made of glass: the glyphs (in the element's own font) are the
+ * glass outline. The DOM text stays — selectable, accessible — but is
+ * see-through while glass draws it. inline-block + white-space: pre by default.
+ */
+export declare const GlassText: <T extends ElementType = 'span'>(props: GlassTextProps<T>) => JSX.Element | null;
+
+export interface GlassGroupController {
+  readonly el: HTMLElement | null;
+  /** Change the spacing (px). */
+  setSpacing(px: number): void;
+  /** Stop melting: the members are separate glass again. */
+  destroy(): void;
+}
+/** Plain JS: make `el` a glass group container (its glass children melt together). */
+export declare function createGlassGroup(el: HTMLElement, options?: { spacing?: number }): GlassGroupController;
 
 // --- Switch + slider ------------------------------------------------------------------------
 
@@ -562,6 +680,11 @@ export interface GlassToast {
   icon?: Element | string;
   /** ms before it leaves (default 4000; 0 = until swiped away). */
   duration?: number;
+  /**
+   * How screen readers announce it: "status" (default, politely — after
+   * what they're reading) or "alert" (straight away — for errors).
+   */
+  role?: 'status' | 'alert';
   /** Per-element glass props for this toast, e.g. { style: 'crystal' }. */
   props?: GlassProps;
 }
@@ -806,8 +929,53 @@ export declare function configureGlass(config: GlassConfig | null, opts?: { sile
 /** Add a preset pack (extra groups etc.) over the built-in presets and under configureGlass(), which keeps it. Returns a remove function. */
 export declare function addGlassPresets(config: GlassConfig): () => void;
 export declare function getGlassConfig(): GlassConfig;
+/**
+ * The look of every glass on the page, in one line: applyGlassLook('frosted'),
+ * applyGlassLook('tinted', { color: '#ff2d55' }), applyGlassLook(null) = none.
+ * Elements / groups with their own `look` keep theirs. Returns a function
+ * that puts the previous page look back.
+ */
+export declare function applyGlassLook(name: GlassLook | null, options?: { color?: string }): () => void;
+/** The page look in use (applyGlassLook's, else the config's global.look), or null. */
+export declare function getGlassLook(): { name: string; color: string } | null;
+/** The built-in look names. */
+export declare const GLASS_LOOKS: GlassLookName[];
 export declare function requestGlassRender(): void;
 export declare function reserveSnapshotArea(key: string, rect: { left: number; top: number; right: number; bottom: number } | null): void;
+
+// --- Scroll edge effect + tilt highlight (1.5.2) -----------------------------------------------
+export interface GlassScrollEdgeOptions {
+  /** Which edges get the effect (default 'top'). */
+  edges?: 'top' | 'bottom' | 'both';
+  /** soft = gradual blur + fade (default); hard = a more opaque backing with a crisp edge. */
+  effect?: 'soft' | 'hard';
+  /** px of fade beyond the bar (default 32). */
+  size?: number;
+  /** px fully covered at the edge — the pinned bar's height (default 0); one number or per edge. */
+  inset?: number | { top?: number; bottom?: number };
+  /** What the content fades into: 'auto' (nearest opaque background, default) or a CSS colour. */
+  color?: string;
+}
+export interface GlassScrollEdgeController {
+  update(options: GlassScrollEdgeOptions): void;
+  destroy(): void;
+  host: HTMLElement | null;
+}
+/** Scroll edge effect on a scroll container — or on the page itself (window / document). */
+export declare function createScrollEdge(target: HTMLElement | Window | Document, options?: GlassScrollEdgeOptions): GlassScrollEdgeController;
+export type GlassScrollEdgeProps = GlassScrollEdgeOptions &
+  Omit<HTMLAttributes<HTMLElement>, 'color'> & {
+    /** The container's tag (default 'div'). */
+    as?: keyof JSX.IntrinsicElements;
+    children?: ReactNode;
+  };
+/** A scroll container (overflow-y auto unless its style says otherwise) with the scroll edge effect. A pinned bar inside needs z-index ≥ 2. */
+export declare const GlassScrollEdge: ForwardRefExoticComponent<GlassScrollEdgeProps & RefAttributes<HTMLElement>>;
+/**
+ * Turn the tilt highlight on where the browser asks first (iOS): call from a tap / click handler.
+ * Resolves true when tilt data will flow, false when refused or unsupported. Never called by the library itself.
+ */
+export declare function enableTiltHighlight(): Promise<boolean>;
 /** @deprecated moved to "glassparency/devtools" (still here until the next major version) */
 export declare const isGlassColor: typeof import('./devtools').isGlassColor;
 export declare const GLASS_VERSION: string;
@@ -860,3 +1028,15 @@ export type GlassQuality = { level: 'high' | 'medium' | 'low'; auto: boolean; fp
 export declare function getGlassQuality(): GlassQuality;
 export declare function subscribeGlassQuality(fn: () => void): () => void;
 export declare const GLASS_QUALITY_LEVELS: Array<{ name: 'high' | 'medium' | 'low'; samples: number; bufferScale: number; dpr: number }>;
+/**
+ * Saving power (global.powerSaving):
+ *   enabled        global.powerSaving is on
+ *   hidden         the tab is hidden (drawing is paused while enabled)
+ *   reducedMotion  animations jump to their end right now (OS "Reduce motion", or low battery while enabled)
+ *   lowBattery     the battery is low (≤ 20 %) and unplugged (Battery Status API; always false without it)
+ */
+export type GlassPower = { enabled: boolean; hidden: boolean; reducedMotion: boolean; lowBattery: boolean };
+/** The power-saving state (stable between changes: fine for useSyncExternalStore). */
+export declare function getGlassPower(): GlassPower;
+/** Called whenever the power-saving state changes. */
+export declare function subscribeGlassPower(fn: () => void): () => void;

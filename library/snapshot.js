@@ -33,6 +33,7 @@
  */
 import { getGlassTheme, getGlobal, glassRoot, subscribeConfig } from './config';
 import { allEntries, isFloatingGlass, placement, requestRender, stats } from './registry';
+import { pausedWhileHidden, subscribeGlassPower } from './power';
 
 /**
  * Latest picture:
@@ -364,9 +365,22 @@ function loadSnapdom() {
   return snapdomPromise;
 }
 
+let dueWhileHidden = false; // a picture was due while the tab was hidden
+subscribeGlassPower(() => {
+  if (!dueWhileHidden || pausedWhileHidden()) return;
+  dueWhileHidden = false;
+  scheduleSnapshot();
+});
 async function take() {
   const g = getGlobal().snapshot;
   if (!g.enabled || !started) return;
+  // Hidden tab (global.powerSaving, power.js): a capture is the most
+  // expensive thing the glass does and nobody would see it. Remember that
+  // one was due; it's taken as soon as the tab is shown again.
+  if (pausedWhileHidden()) {
+    dueWhileHidden = true;
+    return;
+  }
   // Never mid-scroll (the picture would be torn): wait for scrolling to settle.
   if (performance.now() - lastScrollAt < 180) return scheduleSnapshot(200);
   if (busy) {

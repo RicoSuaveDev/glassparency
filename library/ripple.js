@@ -33,7 +33,8 @@ const SPAWN_DISTANCE = 1.6;
 /** …and this long after the last one (ms). */
 const SPAWN_GAP_MS = 160;
 
-const reducedMotion = () => typeof window !== 'undefined' && Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
+// (The OS "Reduce motion" setting, or a low unplugged battery — power.js.)
+import { reducedMotion } from './power';
 
 const listeners = new Set();
 /** Called with the entry id on every animation frame while it has rings (live.js redraws its filter). */

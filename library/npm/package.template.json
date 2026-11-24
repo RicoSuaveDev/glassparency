@@ -1,7 +1,7 @@
 {
   "$comment": "Template for the published package.json. build.mjs copies it into the build folder (minus this comment). The release script (scripts/glass-release.sh) bumps \"version\" here. To rename the package, change \"name\" (check it is free first: npm view <name>).",
   "name": "glassparency",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "Apple-style Liquid Glass for the web: real refraction of the page (WebGL + live SVG filters), squircle rims, specular light, liquid morphing, light/dark themes and an automatic CSS fallback. React hooks plus a no-React script for any site.",
   "keywords": [
     "liquid-glass",
@@ -14,7 +14,11 @@
     "react",
     "ui",
     "apple",
-    "backdrop-filter"
+    "backdrop-filter",
+    "vue",
+    "svelte",
+    "tailwindcss",
+    "nextjs"
   ],
   "license": "MIT",
   "homepage": "https://ricosuavedev.github.io/glassparency/",
@@ -52,6 +56,51 @@
         "default": "./dist/devtools.cjs"
       }
     },
+    "./vanilla": {
+      "import": {
+        "types": "./dist/vanilla.d.ts",
+        "default": "./dist/vanilla.js"
+      },
+      "require": {
+        "types": "./dist/vanilla.d.cts",
+        "default": "./dist/vanilla.cjs"
+      }
+    },
+    "./vue": {
+      "import": {
+        "types": "./dist/vue.d.ts",
+        "default": "./dist/vue.js"
+      },
+      "require": {
+        "types": "./dist/vue.d.cts",
+        "default": "./dist/vue.cjs"
+      }
+    },
+    "./tailwind": {
+      "import": {
+        "types": "./dist/tailwind.d.ts",
+        "default": "./dist/tailwind.js"
+      },
+      "require": {
+        "types": "./dist/tailwind.d.cts",
+        "default": "./dist/tailwind.cjs"
+      }
+    },
+    "./svelte/actions": {
+      "import": {
+        "types": "./dist/svelte/index.d.ts",
+        "default": "./dist/svelte/actions.js"
+      },
+      "require": {
+        "types": "./dist/svelte/index.d.ts",
+        "default": "./dist/svelte/actions.cjs"
+      }
+    },
+    "./svelte": {
+      "types": "./dist/svelte/index.d.ts",
+      "svelte": "./dist/svelte/index.js",
+      "default": "./dist/svelte/index.js"
+    },
     "./glass.css": "./dist/glass.css",
     "./glass.config.json": "./dist/glass.config.json",
     "./package.json": "./package.json"
@@ -74,7 +123,21 @@
     "@react-three/fiber": "^9.0.0",
     "react": ">=19 <19.4",
     "react-dom": ">=19 <19.4",
-    "three": ">=0.159.0"
+    "svelte": ">=5.0.0",
+    "tailwindcss": ">=3.4.0",
+    "three": ">=0.159.0",
+    "vue": ">=3.3.0"
+  },
+  "peerDependenciesMeta": {
+    "svelte": {
+      "optional": true
+    },
+    "tailwindcss": {
+      "optional": true
+    },
+    "vue": {
+      "optional": true
+    }
   },
   "dependencies": {
     "@zumer/snapdom": "3.2.0",

@@ -28,8 +28,11 @@ Under the hood:
 
 - [What it looks like](#what-it-looks-like)
 - [Three ways to use it](#three-ways-to-use-it) — React, one `<script>` on any site, or the `<glass-ui>` element
-- [Switches and sliders](#switches-and-sliders) · [More controls](#checkboxes-radios-text-fields-tab-bars-sidebars-and-progress-bars) · [Segmented, stepper, range & block sliders](#segmented-control-stepper-range-and-block-sliders) · [Popovers, menus, tooltips, sheets & toasts](#popovers-menus-selects-tooltips-sheets-and-toasts) · [Styles](#styles-default-crystal-frosted)
-- [Squish & stretch](#squish--stretch) · [Shape springs](#shape-springs) · [Morph any element](#morph-any-element-into-another-glassmorph) · [Readable text](#readable-text-automatically-textcolor-auto)
+- [Looks: clear, frosted, tinted, dark smoke](#looks-clear-frosted-tinted-dark-smoke) — a theme in one line
+- [Vue](#vue) · [Svelte](#svelte) · [Tailwind CSS](#tailwind-css) · [Next.js and server rendering](#nextjs-and-server-rendering)
+- [Switches and sliders](#switches-and-sliders) · [More controls](#checkboxes-radios-text-fields-tab-bars-sidebars-and-progress-bars) · [Segmented, stepper, range & block sliders](#segmented-control-stepper-range-and-block-sliders) · [Popovers, menus, tooltips, sheets & toasts](#popovers-menus-selects-tooltips-sheets-and-toasts) · [Keyboard & screen readers](#keyboard-and-screen-readers) · [Styles](#styles-default-crystal-frosted)
+- [Squircle corners, pointer / tilt highlight, scroll edge effect](#squircle-corners-pointer--tilt-highlight-scroll-edge-effect)
+- [Squish & stretch](#squish--stretch) · [Shape springs](#shape-springs) · [Morph any element](#morph-any-element-into-another-glassmorph) · [Glass that melts together](#glass-that-melts-together-glassgroup) · [Custom shapes & glass text](#custom-shapes-paths-icons-and-glass-text) · [Readable text](#readable-text-automatically-textcolor-auto)
 - [Built-in groups](#built-in-groups-presets) · [Configuration](#configuration)
 - [How it works](#how-it-works-and-what-your-page-needs) · [API](#api) · [Requirements](#requirements)
 - [Troubleshooting](#troubleshooting) · [Building from source & contributing](#building-from-source--contributing) · [Credits](#credits)
@@ -162,6 +165,171 @@ attribute updates the glass. Its content is ordinary HTML (no shadow DOM), so yo
 - Use it for containers: cards, panels, bars, chips, menus. Native controls keep their own glass versions
   (`<GlassSwitch>`, `data-glassparency-switch`…).
 - TypeScript: `<glass-ui>` is typed in JSX and in `document.querySelector('glass-ui')`.
+
+---
+
+## Looks: clear, frosted, tinted, dark smoke
+
+Ready-made themes for the whole page, in one line:
+
+| Look | |
+|---|---|
+| `clear` | Barely-there glass: almost no tint or frost, a stronger lens and a bright rim. The page shows through. |
+| `frosted` | Milky, heavily frosted glass in each group's own tint; what's behind turns to soft colour. |
+| `tinted` | Coloured glass: every surface takes one colour (default `#5b7cfa`), lightly, with the page's colours boosted. |
+| `smoke` | Dark smoke: smoked, near-black glass that darkens what's behind it. Auto text turns light by itself. (`dark-smoke` works too.) |
+
+```js
+import { applyGlassLook } from 'glassparency';
+applyGlassLook('frosted');
+applyGlassLook('tinted', { color: '#ff2d55' });
+applyGlassLook(null);                         // no look
+```
+
+```jsx
+<GlassProvider look="frosted">…</GlassProvider>             {/* or look={{ name: 'tinted', color: '#ff2d55' }} */}
+<Glass group="card" look="smoke">…</Glass>                  {/* one element (any props: { look: 'smoke' }) */}
+<Glass group="card" look="none">…</Glass>                   {/* opt out of the page look */}
+```
+
+```html
+<!-- script build -->
+<html data-glassparency-look="frosted">                    <!-- the whole page (or on <body>) -->
+<div data-glassparency="card" data-glassparency-look="tinted" data-glassparency-look-color="#ff2d55">…</div>
+<div data-glassparency-look="smoke">…</div>                 <!-- a look alone gives glass too (group "panel") -->
+```
+
+Which look an element gets: its own `look` (props, its group or `defaults`; `"none"` = no look), then the page
+look (`applyGlassLook()` / `<GlassProvider look>`), then `global.look` in the config.
+
+Looks are rules applied to each group's values, like the [styles](#styles-default-crystal-frosted), so they work on
+every group, your own included, in light and dark mode. They leave alone what isn't glass: solid parts (switch
+knobs), accent colours (a checked box, a primary button) and grey tracks keep theirs; tinted and smoke recolour
+only page surfaces (cards, panels, bars, menus…). Animated controls show the look in every frame.
+
+Fine-tune a look, or make your own, in the config's `looks` block (preset packs can ship looks too):
+
+```js
+configureGlass({
+  looks: {
+    frosted: { blur: 32 },                                   // fine-tune a built-in look
+    brand: { base: 'tinted', color: '#7c3aed', rimLight: 0.8, dark: { tintOpacity: 0.4 } },
+  },
+  global: { look: 'brand' },
+});
+```
+
+---
+
+## Vue
+
+`glassparency/vue` (Vue 3.3+, Nuxt): a `v-glass` directive and components for every control. Thin wrappers over
+the plain-JS API, so the controls are the very same ones.
+
+```js
+import { createApp } from 'vue';
+import { GlassparencyPlugin } from 'glassparency/vue';
+createApp(App).use(GlassparencyPlugin, { look: 'frosted' }).mount('#app');   // registers v-glass + the components
+```
+
+```vue
+<div v-glass="'card'">…</div>
+<div v-glass:card.smoke>…</div>                       <!-- group as the argument, look as a modifier -->
+<div v-glass="{ group: 'card', look: 'tinted', lookColor: '#ff2d55', props: { tintOpacity: 0.3 } }">…</div>
+
+<Glass as="section" group="card" look="frosted">…</Glass>
+<GlassSwitch v-model="wifi" aria-label="Wi-Fi" />
+<GlassSlider v-model="volume" :min="0" :max="100" @change-end="save" />
+<GlassCheckbox v-model="desktop">On Desktop</GlassCheckbox>
+<GlassSegmented v-model="range"><button data-gp-item>Day</button><button data-gp-item>Week</button></GlassSegmented>
+<GlassSelect v-model="sort" :options="[{ value: 'a', label: 'Alpha' }]" />
+<GlassSheet v-model:open="open" :detents="[0.45, 0.92]">…</GlassSheet>
+```
+
+Components: `Glass`, `GlassSwitch`, `GlassSlider`, `GlassCheckbox`, `GlassRadio`, `GlassTextField`, `GlassTabBar`,
+`GlassSidebar`, `GlassProgress`, `GlassSegmented`, `GlassStepper`, `GlassRangeSlider`, `GlassBlockSlider`,
+`GlassPopover`, `GlassMenu`, `GlassSelect`, `GlassTooltip`, `GlassSheet` — the same options as the React ones
+(as props), plus `look`, `lookColor`, `glass-props` (per-part glass props) and `groups`. Events:
+`update:modelValue`, `change`, and `change-end` / `clear` / `select` / `open-change` / `close` where the control has
+them. Plugin options: `look`, `config`, `auto` (also scan the page for `data-glassparency` attributes and glass
+classes; default `false`), `classes`, `components: false` (only the directive). Without the plugin, import
+`vGlass` and the components directly — the glass starts on first use. Server rendering: nothing touches the page
+until a component mounts in the browser.
+
+## Svelte
+
+`glassparency/svelte` (Svelte 5, runes): `use:glass` and an action for every control, plus components.
+
+```svelte
+<script>
+  import { glass, startGlass, GlassSwitch, GlassSelect } from 'glassparency/svelte';
+  startGlass({ look: 'clear' });          // optional: the glass starts by itself on first use
+  let wifi = $state(true);
+  let sort = $state('a');
+</script>
+
+<div use:glass={'card'}>…</div>
+<div use:glass={{ group: 'card', look: 'smoke' }}>…</div>
+<GlassSwitch bind:checked={wifi} aria-label="Wi-Fi" />
+<GlassSelect bind:value={sort} options={[{ value: 'a', label: 'Alpha' }]} />
+```
+
+The components (the same list as Vue's) ship as `.svelte` source, compiled by your app's Svelte like any Svelte
+library; values are `bind:`-able and callbacks are lower-case props (`onchange`, `onchangeend`, `onselect`…). The
+actions (`glass`, `glassSwitch`, `glassSlider`, … `glassSelect`) are plain JavaScript —
+`glassparency/svelte/actions` imports them without the components, and they fit any framework:
+`const a = glassSwitch(el, { checked, onChange }); a.update({ checked }); a.destroy();`
+
+## Tailwind CSS
+
+`glassparency/tailwind` adds classes that mark elements for glass:
+
+| Class | |
+|---|---|
+| `glass` | Glass (group `panel`) |
+| `glass-clear`, `glass-frosted`, `glass-tinted`, `glass-smoke` | Glass with that [look](#looks-clear-frosted-tinted-dark-smoke) |
+| `glass-group-card` | The glass group (`glass-group-[myGroup]` for your own) |
+| `glass-tint-rose-500` | The tinted look's colour (any theme colour, or `glass-tint-[#ff2d55]`) |
+
+```css
+/* Tailwind v4 */
+@import "tailwindcss";
+@plugin "glassparency/tailwind";
+```
+```js
+// Tailwind v3 — tailwind.config.js
+plugins: [require('glassparency/tailwind')],
+```
+```html
+<section class="glass-frosted glass-group-card rounded-3xl p-6">…</section>
+<button class="glass-tinted glass-tint-rose-500 glass-group-button rounded-full px-5 py-2">Save</button>
+```
+
+The glass itself is attached by the library, which finds these classes the way it finds `data-glassparency`
+attributes: load the script build, or call `start()` from `glassparency/vanilla` (in a React / Next.js app that
+already renders `<GlassProvider>`: `start({ provider: false })`). Until the glass is attached each class shows a
+plain-CSS stand-in (translucent background + backdrop blur in that look), so the page never shows bare boxes while
+loading. Options: `@plugin "glassparency/tailwind" { fallback: false; }` (v4) or
+`require('glassparency/tailwind')({ fallback: false })` (v3) turn the stand-in off. Class detection can be turned
+off with `start({ classes: false })` (or `data-no-classes` on the script tag).
+
+## Next.js and server rendering
+
+Every entry that runs in the browser (`glassparency`, `/devtools`, `/vanilla`, `/vue`, `/svelte`) starts with
+`"use client"`, and none touches `window` or `document` while loading — so they can be imported from App Router
+server components (`<GlassProvider>` in `app/layout.js`, `<Glass>` in a page), from Nuxt and from SvelteKit.
+The glass starts in the browser after hydration; the server renders your HTML unchanged. For the classes /
+attributes in a Next.js app, start the auto-attach in a client component:
+
+```jsx
+'use client';
+import { useEffect } from 'react';
+import { start } from 'glassparency/vanilla';
+export function GlassClasses() {
+  useEffect(() => start({ provider: false }), []);
+  return null;
+}
+```
 
 ---
 
@@ -374,8 +542,9 @@ toast.show({ title: 'Saved', body: 'Your changes are saved.', icon: '<svg …>�
 - Tooltip: `placement` `"top"` (default, flips below when there's no room) or `"bottom"`, `delay` (ms, default 500).
 - Sheet: `detents` (default `[0.45, 0.92]`), `detent` (index to open at / move to), `onDetentChange`. Its look
   blends from group `sheet` (lowest detent) to `sheetFull` (highest).
-- Toasts: `show({ title, body, icon, duration, props })` returns a function that dismisses that toast;
-  `duration: 0` keeps it until it's swiped away. `useGlassToaster({ max, duration })` sets the defaults.
+- Toasts: `show({ title, body, icon, duration, role, props })` returns a function that dismisses that toast;
+  `duration: 0` keeps it until it's swiped away. `role: "alert"` has screen readers announce it straight away
+  (errors); the default `"status"` waits politely. `useGlassToaster({ max, duration })` sets the defaults.
 - **Without React:** `createPopover(button, panel, opts)`, `createMenu(button, panel, opts)`,
   `createSelect(button, panel, opts)` (options are the panel's children with `data-value`),
   `createTooltip(el, { text })`, `createSheet(el, opts)` (`open(detent)`, `close()`, `snapTo(i)`),
@@ -404,6 +573,32 @@ toast.show({ title: 'Saved', body: 'Your changes are saved.', icon: '<svg …>�
 
 ---
 
+## Keyboard and screen readers
+
+Every control works from the keyboard and tells screen readers what it is, with the WAI-ARIA roles and states
+written for you. There is **no focus ring** on any glass control (by design — like Apple's controls); if your
+site needs one, add your own `:focus-visible` style (the library's rules have zero specificity).
+
+| Control | Role / states | Keys |
+|---|---|---|
+| Switch | `switch`, `aria-checked` | Space / Enter toggle |
+| Checkbox | `checkbox`, `aria-checked` | Space (and Enter) toggle |
+| Radio | `radio`, `aria-checked`; radios with the same `name` are one group: their shared parent gets `role="radiogroup"` (if it has no role), and only the checked radio is a Tab stop | ← → ↑ ↓ pick the previous / next radio |
+| Slider, vertical / block slider | `slider`, `aria-valuenow` / `-valuemin` / `-valuemax`, `aria-orientation` | ← → ↑ ↓ one step, PageUp / PageDown a tenth, Home / End min / max |
+| Range slider | a `group` of two `slider` knobs ("Minimum", "Maximum") | the same, on the focused knob |
+| Stepper | `group` with "Decrease" / "Increase" buttons; the value is read out when it changes | ↑ → step up, ↓ ← down, Home / End min / max |
+| Segmented control | `tablist` of `tab`s (`aria-selected`), roving focus: only the selected tab is a Tab stop | ← → (wrap), Home / End, Enter / Space |
+| Tab bar, sidebar | links / buttons, `aria-current="page"` on the selected one — or set `role="tablist"` on the bar and it becomes a tab list like the segmented control | ← → (↑ ↓ for a sidebar), Home / End |
+| Popover | `dialog`; its button gets `aria-haspopup`, `aria-expanded`, `aria-controls` | Enter / Space open (focus moves in), Escape closes (focus back on the button) |
+| Menu | `menu` of `menuitem`s, roving focus | ↓ / ↑ / Enter / Space on the button open it; ↓ ↑ Home End move, Enter / Space pick, letters jump, Escape closes, Tab closes and moves on |
+| Select | `listbox` of `option`s (`aria-selected`) | as the menu |
+| Tooltip | `tooltip`, linked with `aria-describedby` | shown on keyboard focus, Escape hides |
+| Sheet | `dialog`, `aria-modal` | Escape closes; Tab / Shift+Tab stay inside it; focus returns where it was |
+| Toasts | announced through a polite (`status`) or assertive (`alert`, `role: "alert"`) live region | — |
+| Progress | `progressbar`, `aria-valuenow` (none while busy) | — |
+
+---
+
 ## Styles: default, crystal, frosted
 
 Every group has a `style`:
@@ -423,6 +618,54 @@ configureGlass({ groups: { card: { style: 'frosted' }, tabBar: { style: 'crystal
 
 Fine-tune a style for one group with a `crystal` or `frosted` block, merged over the rules (like `hover`):
 `tabLensActive: { frosted: { tintOpacity: 0.04, blur: 0 } }`.
+
+---
+
+## Squircle corners, pointer / tilt highlight, scroll edge effect
+
+All three are **off by default** — existing glass looks exactly the same until you turn them on.
+
+**Squircle corners** — `corners: "squircle"` gives a rounded rectangle Apple‑style *continuous‑curvature* corners
+(a superellipse, exponent 4, bending over 1.6 × `radius` so it looks about as round) instead of quarter circles —
+the outline, rim, border, shadow and refraction all follow it. (`profile` only shapes the rim's lens curve.) Live and
+CSS glass use `corner-shape: squircle` where the browser has it (the identical curve); elsewhere CSS glass clips to
+the exact path, and live glass in an older Chromium keeps round corners. Circles and capsules stay round. The rim
+(`bevel`) is capped at 0.38 × the corner's extent — a squircle's tightest bend.
+
+```json
+{ "groups": { "card": { "corners": "squircle", "radius": 24 } } }
+```
+
+**Pointer / tilt highlight** — `lightFollow` turns the specular rim towards the mouse (`"pointer"`), follows the
+device tilt (`"tilt"`), or picks one by device (`"auto"`: pointer with a mouse, tilt on touch screens).
+`lightFollowAmount` (0–1, default 1) sets how far it turns away from `lightAngle`. The motion is smoothed and stops
+when settled; with `prefers-reduced-motion` the light stays put, and with `"off"` nothing runs at all (no
+listeners). **iOS** only gives tilt data after the user allows it, from a tap — the library never asks by itself:
+
+```js
+import { enableTiltHighlight } from 'glassparency';
+button.addEventListener('click', () => enableTiltHighlight()); // → Promise<boolean>
+```
+
+**Scroll edge effect** (iOS 26) — content scrolling under a pinned bar blurs and fades out over the last few dozen
+px instead of a hard cut. `effect: "soft"` (gradual blur + fade) or `"hard"` (a more opaque backing with a crisp
+edge), on the `top`, `bottom` or `both` edges. `inset` = the bar's height (fully covered), `size` = the fade beyond
+it (default 32 px), `color` = what it fades into (`"auto"`: the nearest opaque background). Pure CSS while scrolling
+(backdrop‑filter slices + masks); a bar *inside* the scroller needs `z-index` ≥ 2 to stay above it.
+
+```jsx
+import { GlassScrollEdge } from 'glassparency';
+
+<GlassScrollEdge edges="both" effect="soft" inset={{ top: 56, bottom: 80 }} style={{ height: '100vh' }}>
+  <header style={{ position: 'sticky', top: 0, zIndex: 2 }}>…</header>
+  …
+</GlassScrollEdge>
+```
+
+Without React: `createScrollEdge(scroller | window, { edges, effect, size, inset, color }) → { update, destroy }`,
+or in the script build `<div data-glassparency-scroll-edge="top soft" data-glassparency-scroll-edge-inset="56">`
+(also `-size`, `-color`; `-inset="56 80"` = top / bottom; on `<body>` = the page's own scrolling). WebGL glass
+refracts a picture of the page that doesn't include the blur; live glass (Chromium) sees it.
 
 ---
 
@@ -515,6 +758,80 @@ toolbar's items coming out of its + button.)
   position (e.g. `position: fixed` / `absolute`) before morphing.
 - Where WebGL glass isn't running (phones' CSS layout, no WebGL, Reduce transparency) or with Reduce motion, the
   target simply grows out of `from` with a transform + fade — your code doesn't change.
+
+## Glass that melts together: `<GlassGroup>`
+
+Like Apple's `GlassEffectContainer`: the glass inside a group is drawn as **one liquid surface**. Pieces that come
+within `spacing` px of each other melt into one blob, and pull apart again as they move away — live, while they
+animate (CSS transitions, springs, drags).
+
+```jsx
+import { Glass, GlassGroup } from 'glassparency';
+
+<GlassGroup spacing={24} className="toolbar">
+  <Glass as="button" group="iconButton">…</Glass>
+  <Glass as="button" group="iconButton">…</Glass>
+</GlassGroup>
+```
+
+```js
+// Plain JS
+const group = createGlassGroup(toolbar, { spacing: 24 });
+group.setSpacing(40);   // animate it, e.g. to pull pieces apart
+group.destroy();        // separate glass again
+```
+
+```html
+<!-- Script build -->
+<div data-glassparency-group="24">
+  <button data-glassparency="iconButton">…</button>
+  <button data-glassparency="iconButton">…</button>
+</div>
+```
+
+- `spacing` (px, default 24, max 200): two edges join once the gap between them closes to `spacing`; a soft
+  bulge starts a little before that.
+- Members are the glass elements whose nearest group container is this one (nested groups are separate), on
+  the same layer and tier. The container may have glass of its own; it isn't a member.
+- **Cap: 16 pieces per group** (the liquid shader's per-pixel loop). Of those, up to 4 can have custom shapes.
+  Pieces past the cap are drawn as separate glass (no melting).
+- Group members are always drawn by WebGL (live SVG glass can't melt). Where WebGL isn't running, every
+  member keeps its own CSS glass: separate pieces, no melting.
+- An element's own `morph` name wins over its group.
+
+## Custom shapes: paths, icons and glass text
+
+Glass in any outline. The shape is turned into a distance field (rasterized, then an exact distance transform,
+cached per shape and size), and the glass shader reads that instead of its rounded rectangle, so the rim,
+refraction, light, border, shadow and group melting all follow the real outline. The shape is fitted into the
+element's box (centred; `fit: 'fill'` stretches it).
+
+```jsx
+// Any SVG path (viewBox optional: without one the path's own bounds are used)
+<Glass group="iconButton" shape={{ path: 'M12 21.35l-1.45-1.32C5.4 15.36 …z', viewBox: '0 0 24 24' }} style={{ width: 120, height: 120 }} />
+
+// A hole: fillRule "evenodd"
+<Glass group="iconButton" shape={{ path: 'M12 1a11 11 0 1 0 0 22…z M12 6…z', fillRule: 'evenodd', viewBox: '0 0 24 24' }} />
+
+// An icon: the <svg> inside the element (stroked icons work too). It's hidden — the glass is the icon.
+<Glass as="button" group="iconButton" shape={{ svg: 'child' }} aria-label="Favourite"><StarIcon /></Glass>
+// …or markup / an element: shape={{ svg: '<svg viewBox="0 0 24 24">…</svg>' }}
+
+// Headline text made of glass, in the element's own font
+<GlassText as="h1" group="panel" style={{ fontSize: 120, fontWeight: 900 }}>Liquid</GlassText>
+```
+
+- `shape` on `<Glass>` is the same as `glass={{ shape }}`, so it also works in `attachGlass(el, group, { shape })`,
+  `data-glassparency-props='{"shape":{"text":true}}'` and `<glass-ui props>`. `{ text: true }` uses the
+  element's own text.
+- `<GlassText>`: the DOM text stays (selectable, read by screen readers) but turns see-through while glass draws
+  it. It's `inline-block` + `white-space: pre` by default (`\n` starts a new line); big, bold type works best —
+  thin strokes are all rim. Its shape is redrawn when the text, size or loaded web fonts change.
+- While a custom shape's size keeps changing (a spring, a press), its last field is stretched; a fresh one is
+  made once the size holds still.
+- Custom shapes are drawn by WebGL. **CSS fallback:** the frosted, tinted pane masked to the outline (an SVG
+  mask for paths / icons, the rasterized text for text) — no rim light or refraction there.
+- An icon from `{ svg }` is drawn as an image: it can't use outside images or fonts.
 
 ## Readable text automatically: `textColor: "auto"`
 
@@ -618,8 +935,9 @@ const remove = addGlassPresets({
 | `style` | `default`, `crystal`, `frosted` | The look family (see "Styles") |
 | `enabled` | true/false | Glass on/off for the group. Off = the element's normal CSS, plus the colours / border / shadow / shape the group sets *itself*, as plain CSS |
 | `sampler` | `auto`, `webgl`, `live` | How floating glass sees the page. `live` = the real page in real time (Chromium). `webgl` = page pictures. `auto` = live where possible |
-| `shape` | `rectangle`, `roundedRectangle`, `circle`, `capsule` | Outline of the slab |
+| `shape` | `rectangle`, `roundedRectangle`, `circle`, `capsule` or a custom shape `{ path }` / `{ svg }` / `{ text }` (see "Custom shapes") | Outline of the slab |
 | `radius` | px or `"auto"` | Corner radius (`auto` = the element's CSS `border-radius`, or 16 px) |
+| `corners` | `round`, `squircle` | Corner shape of the outline: quarter circles, or Apple‑style continuous curvature (rounded rectangles) |
 | `scale` | `{ x, y }` 0.5–1.5 | Glass size relative to the element |
 | `bleed` | `{ top, right, bottom, left }` px | Hide the rim on those sides (full‑width bars) |
 | `padding` | `{ top, right, bottom, left }` px | Moves the element in by this much (e.g. a header floating as a capsule) |
@@ -636,6 +954,7 @@ const remove = addGlassPresets({
 | `reflection` | 0–3 | Studio reflections on steep rims (WebGL) |
 | `saturation`, `brightness` | 0–3, 0.5–1.5 | Colour of what's seen through the glass |
 | `rimLight`, `rimWidth`, `lightAngle`, `innerGlow` | 0–1, px, deg, 0–1 | Specular rim and inner glow (CSS angles: −45 = top‑left) |
+| `lightFollow`, `lightFollowAmount` | `off`, `auto`, `pointer`, `tilt`; 0–1 | Opt‑in: the rim light follows the pointer / device tilt (see above) |
 | `pressScale`, `pressGlow` | 0.8–1.2, 0–1 | Grow and light up when pressed |
 | `squish`, `squishGrow`, `squishPull`, `squishBounce` | 0–1, 1–1.6, px, 0–1 | Squish & stretch: strength (0 = off), swell, pull towards the pointer, wobble |
 | `morph`, `morphRadius` | name, px | Glass with the same morph name (same layer) melts together within that distance |
@@ -668,6 +987,7 @@ element (also `var(--token, fallback)`). A colour's own alpha is ignored: use th
 | `blend` | `"srgb"` | `"linear"` (opt-in) = the shaders mix rim light, border, saturation, morph glass and the frost in linear light: brighter rims over dark tints, frost that keeps bright spots. The tint over the refracted page stays sRGB |
 | `maxDpr`, `bufferScale` | 1.5, 1 | Render resolution caps |
 | `quality` | `"auto"` | Automatic quality: full quality, stepped down (`medium`: ≤ 4 samples, ¾ buffer, ≤ 1.25 dpr; `low`: ≤ 3, ½, 1) only while **animating** glass runs under ~40 fps, and back up once smooth. An idle page is never throttled. `"high"` / `"medium"` / `"low"` = fixed. `getGlassQuality()` says which level is in use |
+| `powerSaving` | `true` | Saving power: nothing is drawn (and no page pictures are taken) while the tab is **hidden** — one redraw catches up when it's shown — and while the battery is **low (≤ 20 %) and unplugged** (Battery Status API, Chromium) the glass animates as with Reduce motion: springs jump to the end, no ripples or morph films. `false` = always in full. The OS **Reduce motion** setting is followed either way. `getGlassPower()` reports the state |
 | `snapshot` | `{ enabled, debounceMs, minIntervalMs, margin, scale, fullPage: "mobile", mobileScale: 2 }` | Page pictures for WebGL floating glass. `fullPage` pictures the whole page (`true` / `"mobile"` / `false`), so pinned glass never runs out of picture while scrolling |
 | `debugOutlines` | `false` | Pink outline round every slab |
 
@@ -779,8 +1099,13 @@ Your own CSS is used when:
 - the layout matches `global.mobileQuery`;
 - the OS **Reduce transparency** setting is on;
 - the browser has no **hardware** WebGL 2 (software renderers, blocklisted GPUs);
-- the graphics card resets (context lost);
 - the browser has no window (server).
+
+When the **graphics card resets** (WebGL context lost) the CSS glass shows only until the context is back: then
+every glass canvas is rebuilt from scratch (new renderer, materials, textures) and the WebGL glass returns. If the
+browser never restores it, a fresh context is tried after a few seconds. Only a context that keeps getting lost
+(3 times in a minute) or never comes back (~30 s) leaves the CSS glass on for the rest of the visit. To try it:
+`loseGlassContext()` from `glassparency/devtools` (or `Glassparency.loseGlassContext()`).
 
 `getGlassStatus()` / `Glassparency.status()` says which applies.
 
@@ -789,6 +1114,8 @@ Your own CSS is used when:
   animations trigger frames).
 - **Frame cost:** a frame is 0.5–2 ms.
 - **Lazy loading:** three.js and snapDOM load lazily after first paint, and only where glass can run.
+- **Saving power** (`global.powerSaving`, on by default): a hidden tab costs nothing, and a low, unplugged battery
+  turns the motion down (see the table above).
 
 ### Content-Security-Policy
 - The provider adds one `<style>`. Pass `nonce`, or set `injectStyles={false}` and import
@@ -801,8 +1128,9 @@ Your own CSS is used when:
 
 | Export | |
 |---|---|
-| `<GlassProvider config renderIcon injectStyles nonce>` | Starts the glass (once per page) |
-| `<Glass as group glass icon iconSize …>` | An element with glass. `icon` = an element, or a name drawn by `renderIcon(name, size)` |
+| `<GlassProvider config look renderIcon injectStyles nonce>` | Starts the glass (once per page). `look` = the page look |
+| `<Glass as group glass look lookColor shape icon iconSize …>` | An element with glass. `icon` = an element, or a name drawn by `renderIcon(name, size)`; `shape` = a custom outline |
+| `applyGlassLook(name, { color }) → undo()`, `getGlassLook()`, `GLASS_LOOKS` | The page look (see "Looks") |
 | `useGlass(ref, group, props?) → handle` | The hook. Returns the element's glass handle (stable across renders) |
 | `<GlassSwitch>`, `<GlassSlider>` | Liquid Glass switch and slider (see "Switches and sliders") |
 | `createSwitch(el, opts)`, `createSlider(el, opts)` | The same without React |
@@ -813,11 +1141,15 @@ Your own CSS is used when:
 | `<GlassPopover>`, `<GlassMenu>`, `<GlassSelect>`, `<GlassTooltip>`, `<GlassSheet>`, `useGlassToaster()` | Popover, menu, select, tooltip, bottom sheet, toasts |
 | `createPopover`, `createMenu`, `createSelect`, `createTooltip`, `createSheet`, `createToaster`, `getGlassOverlay` | The same without React |
 | `createSquish(el, readCfg)`, `stretchFor(ux, uy, amount)` | Squish & stretch for your own animations |
+| `<GlassScrollEdge edges effect size inset color as>`, `createScrollEdge(scroller, opts)` | Scroll edge effect (iOS 26) |
+| `enableTiltHighlight() → Promise<boolean>` | Allow the tilt highlight on iOS (call from a tap) |
 | `attachGlass(el, group, props?) → handle` | The same without React. The handle: `setProps(props)`, `merge(partial)`, `getProps()`, `setState({ hover, pressed })` (the same look, press grow and glow the pointer gives), `ripple(x?, y?)`, `destroy()`, `el`, `id` |
 | `setGlassProps(el, props)` | Change an element's look without a render (animations) |
 | `getGlassProps(el)`, `mergeGlassProps(el, partial)` | Read / change some of an element's per-element props |
 | `createShapeSpring(el, opts)`, `useShapeSpring(ref, shape, opts)` | Shape springs |
 | `glassMorph(from, to, opts)`, `glassMorph.warm(from, to)`, `useGlassMorph(fromRef, toRef, open, opts)` | Morph any element into another |
+| `<GlassGroup as spacing …>`, `createGlassGroup(el, { spacing }) → { setSpacing, destroy }` | Glass that melts together (see "Glass that melts together") |
+| `<GlassText as group glass …>`, `shape: { path } \| { svg } \| { text }` (also `<Glass shape>`) | Custom shapes and glass text |
 | `<glass-ui group props>`, `defineGlassElement(name?)`, `GLASS_ELEMENT` | Glass as an HTML element (any framework) |
 | `configureGlass(config)` / `getGlassConfig()` | Merge a config over the built‑in one / read the result |
 | `addGlassPresets(config) → remove()` | A preset pack: groups kept under every `configureGlass()` |
@@ -826,16 +1158,23 @@ Your own CSS is used when:
 | `<GlassLayerHost layer>` | A canvas for the `modal` / `top` layer |
 | `getGlassStatus()`, `subscribeGlassStatus(fn)` | State: `loading` / `on` / `fallback` (+ reason) |
 | `getGlassQuality()`, `subscribeGlassQuality(fn)` | Automatic quality: the level in use (`high` / `medium` / `low`) and the fps measured while animating |
+| `getGlassPower()`, `subscribeGlassPower(fn)` | Saving power: `{ enabled, hidden, reducedMotion, lowBattery }` (script build: `Glassparency.power()` / `onPower(fn)`) |
 | `resolveGlass(group, props?, state?)`, `getGlassGlobal()`, `getGlassTheme()`, `GLASS_LAYERS` | The resolved settings |
 
 **`glassparency/devtools`** (tuning and debugging, not needed to use the glass): `setGlassOverride`,
 `clearGlassOverride`, `getGlassOverride`, `setGlassStateOverride`, `setGlassForcedState`, `rawGlassGroup`,
 `rawGlassThemeGroup`, `rawGlassDefaults`, `glassGroupNames`, `subscribeGlassConfig`, `GLASS_SCHEMA`,
-`GLASS_STATE_KEYS`, `glassStats`, `glassLiveCount`, `isGlassColor`. (Until the next major version the main entry
+`GLASS_STATE_KEYS`, `glassStats`, `glassLiveCount`, `isGlassColor`, `loseGlassContext({ restoreAfter })` (tests the
+WebGL context-loss recovery). (Until the next major version the main entry
 still exports them too, each warning once that it moved.)
 
 **The script build** (`window.Glassparency`) has the same names (`attachGlass`, `setGlassProps`, `configureGlass`,
-…); its short names (`attach`, `setProps`, `configure`, …) are aliases.
+…); its short names (`attach`, `setProps`, `configure`, …) are aliases. **`glassparency/vanilla`** is the same API
+as a module, without the auto-start (`start({ config, look, auto, classes, provider })`, `stop()`, `applyLook()`…).
+
+**Framework entries:** `glassparency/vue` (`GlassparencyPlugin`, `vGlass`, components), `glassparency/svelte`
+(actions + components; `glassparency/svelte/actions` = the actions alone), `glassparency/tailwind` (the Tailwind
+plugin). Vue, Svelte and Tailwind are optional peer dependencies — install the one you use.
 
 **TypeScript:** `group="…"` autocompletes the built-in group names. Add your own:
 `declare module 'glassparency' { interface GlassGroups { promoCard: true } }`.
@@ -844,6 +1183,9 @@ still exports them too, each warning once that it moved.)
 - **React apps:** React 19 (19.0–19.3, the range react‑three‑fiber 9 supports), three ≥ 0.159,
   @react-three/fiber 9 and @react-three/drei ≥ 10.7.
 - **Script build:** no requirements.
+- **Vue / Svelte wrappers:** Vue 3.3+ / Svelte 5 (the actions work in any Svelte), plus the React peers above
+  (the glass renderer is React + three.js inside, whatever your framework).
+- **Tailwind plugin:** Tailwind CSS v4 (`@plugin`) or v3.4 (`plugins: [...]`).
 - **Browsers:** WebGL glass needs WebGL 2 (every current desktop browser). Everything else falls back to
   your CSS.
 

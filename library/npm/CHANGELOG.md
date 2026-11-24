@@ -1,13 +1,22 @@
 # Changelog
 
-## 1.5.1 — 2026-11-23
+## 1.5.2 — 2026-11-24
 
-- New: segmented control (<GlassSegmented> / createSegmented), stepper with the value between − and + (<GlassStepper>), range slider with two knobs and a vertical slider (<GlassRangeSlider>), and a Control Center-style block slider (<GlassBlockSlider>: relative drag, rubber-band ends, black icon by default).
-- New: popover, menu and select (<GlassPopover>, <GlassMenu>, <GlassSelect>) — one glass panel that grows out of its button and shrinks back into it — plus tooltips (<GlassTooltip>), an iOS bottom sheet with detents (<GlassSheet>) and toasts (useGlassToaster()). All have plain-JS create… versions and TypeScript types; they live in one shared overlay above the page.
-- New: the script build (window.Glassparency) has all the new controls: the create… functions, toast(), open() / close(), and HTML markup (data-glassparency-segmented, -stepper, -range, -block, -select, -popover, -menu, -tooltip, -sheet, -open) with native inputs kept hidden and in sync.
-- New: getGlassInfo(el) in "glassparency/devtools": an element's glass group, how it is drawn right now (live / tint / webgl / css) and its per-element props — for tuning panels that pick a control on the page.
-- Fixed: glass whose layer or tier changes through its per-element props now moves to the new layer's canvas (it stayed drawn on the old one).
-- Fixed: reserveSnapshotArea() / glassMorph no longer force a new page picture when the current one already covers the area (it froze large pages for 0.25–1 s at the start of every morph).
+- New: look presets — Clear, Frosted, Tinted and Dark smoke — in one line: applyGlassLook('frosted') (returns undo), <GlassProvider look>, a per-element look / lookColor prop, global.look in the config, a "looks" config block for your own, and data-glassparency-look in the script build. Looks only change glass surfaces; solid parts and accent colours keep theirs.
+- New: squircle corners — "corners": "squircle" gives rounded rectangles Apple-style continuous corners in WebGL, live and CSS glass (default "round", unchanged).
+- New: pointer / tilt highlight (opt-in) — "lightFollow": "auto" | "pointer" | "tilt" turns the rim light toward the cursor or follows the phone's tilt, smoothed, with "lightFollowAmount". enableTiltHighlight() asks iOS for motion permission from a tap; the library never asks by itself. Off by default and free when off; "Reduce motion" keeps the light still.
+- New: scroll edge effect — content scrolling under a pinned glass bar blurs and fades out instead of a hard cut, like iOS 26: <GlassScrollEdge>, createScrollEdge() or data-glassparency-scroll-edge. "soft" or "hard", top / bottom / both edges, size, inset and colour. The effect starts behind the middle of the bar, so it has no visible edge and no corners showing around a rounded bar.
+- New: glass that melts together — <GlassGroup spacing={24}>, createGlassGroup() or data-glassparency-group="24": the glass inside is one liquid surface, and pieces closer than the spacing melt into one blob and split apart again as they move (like Apple's GlassEffectContainer). Up to 16 pieces per group.
+- New: custom shapes — glass in any SVG path (shape: { path, viewBox, fillRule }), an SVG icon (shape: { svg }) or text (<GlassText>, shape: { text: true }), drawn from a distance field. Without WebGL the shape shows as a frosted pane masked to the outline. Up to 4 custom shapes per liquid surface.
+- New: melting glass (group members and custom shapes) over an image or gradient page background moves itself to the float layer, where WebGL can draw it, and lifts its own label above the glass. Before, it kept its CSS look and never melted.
+- New: Vue and Svelte — "glassparency/vue" (GlassparencyPlugin, the v-glass directive, 18 components with v-model) and "glassparency/svelte" (use:glass and one action per control, plus 18 Svelte 5 components with bind:). "glassparency/svelte/actions" has the actions alone.
+- New: Tailwind CSS plugin — "glassparency/tailwind" for v4 (@plugin) and v3 (plugins: [require(…)]): glass, glass-clear / frosted / tinted / smoke, glass-group-<name> and glass-tint-<colour> classes. The script build picks these classes up by itself (data-no-classes turns that off).
+- New: "glassparency/vanilla" — the script build's API as a module with no auto-start (start({ provider: false }) etc.), for frameworks and bundlers.
+- New: Next.js / server rendering — every client entry starts with "use client", every entry imports safely on the server, and the build's smoke test now covers all of them.
+- New: WebGL context-loss recovery — when the browser drops the graphics context, the glass shows its CSS look and rebuilds itself in WebGL once the context is back (or retries a fresh one after 3 s). After 3 losses in a minute it stays on CSS glass. loseGlassContext() in "glassparency/devtools" tests it.
+- New: power saving — global "powerSaving" (default true): nothing is drawn while the tab is hidden (one redraw when it's shown again), and animation calms down like "Reduce motion" while the battery is low and unplugged. getGlassPower() / subscribeGlassPower() report it.
+- New: keyboard and screen readers — arrow keys, Home / End and Page Up / Down on sliders, arrows on tab bars, segmented controls and radios (roving tabindex), Home / End on the stepper, Tab closes a menu and moves on, focus stays inside an open sheet, toasts are read out through live regions (new per-toast role option), and ARIA roles and states on every control. No focus rings or highlights are drawn.
+- Fixed: any page using GlassTooltip failed "next build" in Next.js 16 (its minifier broke one line of the tooltip's spring code).
 
 ## 1.5.1 — 2026-11-23
 
